@@ -150,7 +150,12 @@ sai_switch_type_t SaiSwitch::getSwitchType() const
         attr.value.s32 = SAI_SWITCH_TYPE_NPU;
     }
 
-    SWSS_LOG_INFO("switch type: '%s'", (attr.value.s32 == SAI_SWITCH_TYPE_NPU ? "SAI_SWITCH_TYPE_NPU" : "SAI_SWITCH_TYPE_PHY"));
+    if (attr.value.s32 == SAI_SWITCH_TYPE_NPU)
+        SWSS_LOG_INFO("switch type: 'SAI_SWITCH_TYPE_NPU'");
+    else if (attr.value.s32 == SAI_SWITCH_TYPE_PHY)
+        SWSS_LOG_INFO("switch type: 'SAI_SWITCH_TYPE_PHY'");
+    else if (attr.value.s32 == SAI_SWITCH_TYPE_POE)
+        SWSS_LOG_INFO("switch type: 'SAI_SWITCH_TYPE_POE'");
 
     return (sai_switch_type_t) attr.value.s32;
 }

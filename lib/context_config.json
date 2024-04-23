@@ -41,6 +41,23 @@
                     "hwinfo" : "bar"
                 }
             ]
+        },
+        {
+            "guid" : 2,
+            "name" : "syncd2",
+            "dbAsic" : "POE_ASIC_DB",
+            "dbCounters" : "POE_COUNTERS_DB",
+            "dbFlex": "POE_FLEX_COUNTER_DB",
+            "dbState" : "STATE_DB",
+            "zmq_enable":false,
+            "zmq_endpoint": "tcp://127.0.0.1:5575",
+            "zmq_ntf_endpoint": "tcp://127.0.0.1:5576",
+            "switches": [
+                {
+                    "index" : 2,
+                    "hwinfo" : ""
+                }
+            ]
         }
     ]
 }

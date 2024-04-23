@@ -44,6 +44,7 @@ libSaiVS_a_SOURCES = \
 					  SwitchBCM56850.cpp \
 					  SwitchBCM56971B0.cpp \
 					  SwitchBCM81724.cpp \
+					  SwitchPoE.cpp \
 					  SwitchConfigContainer.cpp \
 					  SwitchConfig.cpp \
 					  SwitchContainer.cpp \
@@ -100,6 +101,7 @@ libsaivs_la_SOURCES = \
 					  sai_vs_nexthopgroup.cpp \
 					  sai_vs_policer.cpp \
 					  sai_vs_port.cpp \
+					  sai_vs_poe.cpp \
 					  sai_vs_qosmap.cpp \
 					  sai_vs_queue.cpp \
 					  sai_vs_route.cpp \

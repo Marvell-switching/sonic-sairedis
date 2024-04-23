@@ -52,6 +52,7 @@ PRIVATE extern const sai_next_hop_api_t                vs_next_hop_api;
 PRIVATE extern const sai_next_hop_group_api_t          vs_next_hop_group_api;
 PRIVATE extern const sai_policer_api_t                 vs_policer_api;
 PRIVATE extern const sai_port_api_t                    vs_port_api;
+PRIVATE extern const sai_poe_api_t                     vs_poe_api;
 PRIVATE extern const sai_qos_map_api_t                 vs_qos_map_api;
 PRIVATE extern const sai_queue_api_t                   vs_queue_api;
 PRIVATE extern const sai_route_api_t                   vs_route_api;
