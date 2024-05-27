@@ -219,6 +219,7 @@ AM_COND_IF([SYNCD], [
 AM_COND_IF([SAIVS], [], [
 SAVED_FLAGS="$CXXFLAGS"
 CXXFLAGS="-Xlinker --no-as-needed -lsai -I$srcdir/SAI/inc -I$srcdir/SAI/experimental -I$srcdir/SAI/meta $EXTRA_LIBSAI_LDFLAGS"
+if test x$CROSS_BUILD_ENVIRON != xy; then
 AC_CHECK_FUNCS(sai_query_api_version, [
 AC_MSG_CHECKING([SAI headers API version and library version check])
 AC_TRY_RUN([
@@ -255,6 +256,7 @@ https://github.com/opencomputeproject/SAI/pull/1795 (structs)
 [AC_MSG_RESULT(failed)
 AC_MSG_ERROR("SAI headers API version and library version mismatch")])],
 [AC_MSG_ERROR("SAI library libsai.so does not have sai_query_api_version API which is required")])
+fi
 CXXFLAGS="$SAVED_FLAGS"
 ])])
 
