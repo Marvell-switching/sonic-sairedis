@@ -86,6 +86,88 @@ typedef enum _sai_redis_communication_mode_t
 
 } sai_redis_communication_mode_t;
 
+/**
+ * @brief Use Redis communication channel to handle counters.
+ *
+ * Originally, there are out-of-order issue between the objects and their counters.
+ * This is because the counters are handled on receiving flex counter database update.
+ * However, the objects are handled on receiving update from the redis communication channel.
+ *
+ * To resolve the issue, we use the redis communication channel to handle the counter updates.
+ *
+ * The struct sai_redis_flex_counter_group_parameter_t represents the counter group operations.
+ * The caller (usually orchagent) can change some or all the options of a counter group.
+ * The counter_group_name represents the counter group name which must be a valid list.
+ * For the rest fields, it means not changing it to pass an empty list.
+ */
+typedef struct _sai_redis_flex_counter_group_parameter_t
+{
+    /**
+     * @brief The flex counter group name.
+     *
+     * It is the key of FLEX_COUNTER_TABLE and FLEX_COUNTER_GROUP_TABLE table.
+     */
+    sai_s8_list_t counter_group_name;
+
+    /**
+     * @brief The polling interval of the counter group
+     *
+     * It should be a number representing the polling interval in seconds.
+     */
+    sai_s8_list_t poll_interval;
+
+    /**
+     * @brief The operation of the counter group
+     *
+     * It should be either "enable" or "disable"
+     */
+    sai_s8_list_t operation;
+
+    /**
+     * @brief The counter fetching mode.
+     *
+     * It should be either "STATS_MODE_READ" or "STATS_MODE_READ_AND_CLEAR"
+     */
+    sai_s8_list_t stats_mode;
+
+    /**
+     * @brief The name of the filed that represents the Lua plugin
+     */
+    sai_s8_list_t plugin_name;
+
+    /**
+     * @brief The SHA code of the Lua plugin
+     */
+    sai_s8_list_t plugins;
+
+} sai_redis_flex_counter_group_parameter_t;
+
+typedef struct _sai_redis_flex_counter_parameter_t
+{
+    /**
+     * @brief The key in the flex counter table
+     *
+     * It should be the serialized OID eg. "oid:0x15000000000001"
+     */
+    sai_s8_list_t counter_key;
+
+    /**
+     * @brief The list of counters' IDs that should be fetched.
+     */
+    sai_s8_list_t counter_ids;
+
+    /**
+     * @brief The name of the filed that represents the counters' IDs.
+     */
+    sai_s8_list_t counter_field_name;
+
+    /**
+     * @brief The counter fetch mode of the object.
+     */
+    sai_s8_list_t stats_mode;
+
+} sai_redis_flex_counter_parameter_t;
+
 typedef enum _sai_redis_switch_attr_t
 {
     /**
@@ -249,6 +331,25 @@ typedef enum _sai_redis_switch_attr_t
      * @default 60000
      */
     SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT,
+
+    /**
+     * @brief Flex counter group operations
+     *
+     * @type sai_redis_flex_counter_group_parameter_t
+     * @flags CREATE_AND_SET
+     * @default 0
+     */
+    SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP,
+
+    /**
+     * @brief Flex counter operations
+     *
+     * @type sai_redis_counter_parameter_t
+     * @flags CREATE_AND_SET
+     * @default 0
+     */
+    SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER,
+
 } sai_redis_switch_attr_t;
 
 /**

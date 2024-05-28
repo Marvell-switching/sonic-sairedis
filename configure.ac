@@ -41,6 +41,11 @@ AC_ARG_WITH(sai,
 esac])
 AM_CONDITIONAL(SAIVS,   test x$sai = xvs)
 
+AC_ARG_WITH(dashsai,
+    [ --with-dashsai         compiling against DASH SAI],
+    [AM_CONDITIONAL(DASHSAI,   true)],
+    [AM_CONDITIONAL(DASHSAI,   false)])
+
 AC_ARG_WITH(swss-common-inc,
 [  --with-swss-common-inc=DIR
                            prefix where swss-common includes are installed],
@@ -287,11 +292,13 @@ AC_OUTPUT(Makefile
           saidiscovery/Makefile
           saiasiccmp/Makefile
           tests/Makefile
+          proxylib/Makefile
           unittest/Makefile
           unittest/meta/Makefile
           unittest/lib/Makefile
           unittest/vslib/Makefile
           unittest/syncd/Makefile
+          unittest/proxylib/Makefile
           pyext/Makefile
           pyext/py2/Makefile
           pyext/py3/Makefile)

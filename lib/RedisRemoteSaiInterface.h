@@ -186,6 +186,9 @@ namespace sairedis
                     _In_ sai_api_t api,
                     _In_ sai_log_level_t log_level) override;
 
+            virtual sai_status_t queryApiVersion(
+                    _Out_ sai_api_version_t *version) override;
+
         public: // notify syncd
 
             virtual sai_status_t notifySyncd(
@@ -342,6 +345,27 @@ namespace sairedis
                     _In_ sai_object_type_t objectType,
                     _In_ sai_object_id_t objectId,
                     _In_ const sai_attribute_t *attr);
+
+            bool isSaiS8ListValidString(
+                    _In_ const sai_s8_list_t &s8list);
+
+            bool emplaceStrings(
+                    _In_ const sai_s8_list_t &field,
+                    _In_ const sai_s8_list_t &value,
+                    _Out_ std::vector<swss::FieldValueTuple> &entries);
+
+            bool emplaceStrings(
+                    _In_ const char *field,
+                    _In_ const sai_s8_list_t &value,
+                    _Out_ std::vector<swss::FieldValueTuple> &entries);
+
+            sai_status_t notifyCounterGroupOperations(
+                    _In_ sai_object_id_t objectId,
+                    _In_ const sai_redis_flex_counter_group_parameter_t *flexCounterGroupParam);
+
+            sai_status_t notifyCounterOperations(
+                    _In_ sai_object_id_t objectId,
+                    _In_ const sai_redis_flex_counter_parameter_t *flexCounterParam);
 
         private:
 

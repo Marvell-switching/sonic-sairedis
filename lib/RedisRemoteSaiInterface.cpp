@@ -476,6 +476,14 @@ sai_status_t RedisRemoteSaiInterface::setRedisExtensionAttribute(
 
             return SAI_STATUS_SUCCESS;
 
+        case SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP:
+            return notifyCounterGroupOperations(objectId,
+                                                reinterpret_cast<sai_redis_flex_counter_group_parameter_t*>(attr->value.ptr));
+
+        case SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER:
+            return notifyCounterOperations(objectId,
+                                           reinterpret_cast<sai_redis_flex_counter_parameter_t*>(attr->value.ptr));
+
         default:
             break;
     }
@@ -483,6 +491,126 @@ sai_status_t RedisRemoteSaiInterface::setRedisExtensionAttribute(
     SWSS_LOG_ERROR("unknown redis extension attribute: %d", attr->id);
 
     return SAI_STATUS_FAILURE;
+}
+
+bool RedisRemoteSaiInterface::isSaiS8ListValidString(
+        _In_ const sai_s8_list_t &s8list)
+{
+    SWSS_LOG_ENTER();
+
+    if (s8list.list != nullptr && s8list.count > 0)
+    {
+        size_t len = strnlen((const char *)s8list.list, s8list.count);
+
+        if (len == (size_t)s8list.count)
+        {
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Count (%u) is different than strnlen (%zu)", s8list.count, len);
+        }
+    }
+
+    return false;
+}
+
+bool RedisRemoteSaiInterface::emplaceStrings(
+        _In_ const sai_s8_list_t &field,
+        _In_ const sai_s8_list_t &value,
+        _Out_ std::vector<swss::FieldValueTuple> &entries)
+{
+    SWSS_LOG_ENTER();
+
+    bool result = false;
+
+    if (isSaiS8ListValidString(field) && isSaiS8ListValidString(value))
+    {
+        entries.emplace_back(std::string((const char*)field.list, field.count), std::string((const char*)value.list, value.count));
+        result = true;
+    }
+
+    return result;
+}
+
+bool RedisRemoteSaiInterface::emplaceStrings(
+        _In_ const char *field,
+        _In_ const sai_s8_list_t &value,
+        _Out_ std::vector<swss::FieldValueTuple> &entries)
+{
+    SWSS_LOG_ENTER();
+
+    bool result = false;
+
+    if (isSaiS8ListValidString(value))
+    {
+        entries.emplace_back(field, std::string((const char*)value.list, value.count));
+        result = true;
+    }
+
+    return result;
+}
+
+sai_status_t RedisRemoteSaiInterface::notifyCounterGroupOperations(
+        _In_ sai_object_id_t objectId,
+        _In_ const sai_redis_flex_counter_group_parameter_t *flexCounterGroupParam)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<swss::FieldValueTuple> entries;
+
+    if (flexCounterGroupParam == nullptr || !isSaiS8ListValidString(flexCounterGroupParam->counter_group_name))
+    {
+        SWSS_LOG_ERROR("Invalid parameters when handling counter group operation");
+        return SAI_STATUS_FAILURE;
+    }
+
+    std::string key((const char*)flexCounterGroupParam->counter_group_name.list, flexCounterGroupParam->counter_group_name.count);
+
+    emplaceStrings(POLL_INTERVAL_FIELD, flexCounterGroupParam->poll_interval, entries);
+    emplaceStrings(STATS_MODE_FIELD, flexCounterGroupParam->stats_mode, entries);
+    emplaceStrings(flexCounterGroupParam->plugin_name, flexCounterGroupParam->plugins, entries);
+    emplaceStrings(FLEX_COUNTER_STATUS_FIELD, flexCounterGroupParam->operation, entries);
+
+    m_recorder->recordGenericSet(key, entries);
+
+    m_communicationChannel->set(key,
+                                entries,
+                                (entries.size() != 0) ? REDIS_FLEX_COUNTER_COMMAND_SET_GROUP : REDIS_FLEX_COUNTER_COMMAND_DEL_GROUP);
+
+    return waitForResponse(SAI_COMMON_API_SET);
+}
+
+sai_status_t RedisRemoteSaiInterface::notifyCounterOperations(
+        _In_ sai_object_id_t objectId,
+        _In_ const sai_redis_flex_counter_parameter_t *flexCounterParam)
+{
+    SWSS_LOG_ENTER();
+
+    if (flexCounterParam == nullptr || !isSaiS8ListValidString(flexCounterParam->counter_key))
+    {
+        SWSS_LOG_ERROR("Invalid parameters when handling counter operation");
+        return SAI_STATUS_FAILURE;
+    }
+
+    std::vector<swss::FieldValueTuple> entries;
+    std::string key((const char*)flexCounterParam->counter_key.list, flexCounterParam->counter_key.count);
+    std::string command;
+
+    if (emplaceStrings(flexCounterParam->counter_field_name, flexCounterParam->counter_ids, entries))
+    {
+        command = REDIS_FLEX_COUNTER_COMMAND_START_POLL;
+        emplaceStrings(STATS_MODE_FIELD, flexCounterParam->stats_mode, entries);
+    }
+    else
+    {
+        command = REDIS_FLEX_COUNTER_COMMAND_STOP_POLL;
+    }
+
+    m_recorder->recordGenericSet(key, entries);
+    m_communicationChannel->set(key, entries, command);
+
+    return waitForResponse(SAI_COMMON_API_SET);
 }
 
 sai_status_t RedisRemoteSaiInterface::set(
@@ -1724,6 +1852,27 @@ sai_status_t RedisRemoteSaiInterface::logSet(
     SWSS_LOG_ENTER();
 
     return SAI_STATUS_SUCCESS;
+}
+
+sai_status_t RedisRemoteSaiInterface::queryApiVersion(
+        _Out_ sai_api_version_t *version)
+{
+    SWSS_LOG_ENTER();
+
+    if (version)
+    {
+        *version = SAI_API_VERSION;
+
+        // TODO FIXME implement proper query for syncd, currently this is not an issue since swss is not using this API
+
+        SWSS_LOG_WARN("retruning SAI API version %d with sairedis compiled SAI headers, not actual libsai.so", SAI_API_VERSION);
+
+        return SAI_STATUS_SUCCESS;
+    }
+
+    SWSS_LOG_ERROR("version parameter is NULL");
+
+    return SAI_STATUS_INVALID_PARAMETER;
 }
 
 sai_status_t RedisRemoteSaiInterface::sai_redis_notify_syncd(

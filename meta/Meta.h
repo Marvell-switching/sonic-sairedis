@@ -183,6 +183,9 @@ namespace saimeta
                     _In_ sai_api_t api,
                     _In_ sai_log_level_t log_level) override;
 
+            virtual sai_status_t queryApiVersion(
+                    _Out_ sai_api_version_t *version) override;
+
         public:
 
             void meta_init_db();
@@ -204,6 +207,14 @@ namespace saimeta
             void meta_sai_on_switch_state_change(
                     _In_ sai_object_id_t switch_id,
                     _In_ sai_switch_oper_status_t switch_oper_status);
+
+            void meta_sai_on_switch_asic_sdk_health_event(
+                    _In_ sai_object_id_t switch_id,
+                    _In_ sai_switch_asic_sdk_health_severity_t severity,
+                    _In_ sai_timespec_t timestamp,
+                    _In_ sai_switch_asic_sdk_health_category_t category,
+                    _In_ sai_switch_health_data_t data,
+                    _In_ const sai_u8_list_t description);
 
             void meta_sai_on_switch_shutdown_request(
                     _In_ sai_object_id_t switch_id);

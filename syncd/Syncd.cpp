@@ -155,6 +155,7 @@ Syncd::Syncd(
     m_sn.onNatEvent = std::bind(&NotificationHandler::onNatEvent, m_handler.get(), _1, _2);
     m_sn.onPortStateChange = std::bind(&NotificationHandler::onPortStateChange, m_handler.get(), _1, _2);
     m_sn.onQueuePfcDeadlock = std::bind(&NotificationHandler::onQueuePfcDeadlock, m_handler.get(), _1, _2);
+    m_sn.onSwitchAsicSdkHealthEvent = std::bind(&NotificationHandler::onSwitchAsicSdkHealthEvent, m_handler.get(), _1, _2, _3, _4, _5, _6);
     m_sn.onSwitchShutdownRequest = std::bind(&NotificationHandler::onSwitchShutdownRequest, m_handler.get(), _1);
     m_sn.onSwitchStateChange = std::bind(&NotificationHandler::onSwitchStateChange, m_handler.get(), _1, _2);
     m_sn.onBfdSessionStateChange = std::bind(&NotificationHandler::onBfdSessionStateChange, m_handler.get(), _1, _2);
@@ -169,6 +170,8 @@ Syncd::Syncd(
     m_dbFlexCounter = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbFlex, 0);
     m_flexCounter = std::make_shared<swss::ConsumerTable>(m_dbFlexCounter.get(), FLEX_COUNTER_TABLE);
     m_flexCounterGroup = std::make_shared<swss::ConsumerTable>(m_dbFlexCounter.get(), FLEX_COUNTER_GROUP_TABLE);
+    m_flexCounterTable = std::make_shared<swss::Table>(m_dbFlexCounter.get(), FLEX_COUNTER_TABLE);
+    m_flexCounterGroupTable = std::make_shared<swss::Table>(m_dbFlexCounter.get(), FLEX_COUNTER_GROUP_TABLE);
 
     m_switchConfigContainer = std::make_shared<sairedis::SwitchConfigContainer>();
     m_redisVidIndexGenerator = std::make_shared<sairedis::RedisVidIndexGenerator>(m_dbAsic, REDIS_KEY_VIDCOUNTER);
@@ -379,6 +382,18 @@ sai_status_t Syncd::processSingleEvent(
 
     if (op == REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY)
         return processObjectTypeGetAvailabilityQuery(kco);
+
+    if (op == REDIS_FLEX_COUNTER_COMMAND_START_POLL)
+        return processFlexCounterEvent(key, SET_COMMAND, kfvFieldsValues(kco));
+
+    if (op == REDIS_FLEX_COUNTER_COMMAND_STOP_POLL)
+        return processFlexCounterEvent(key, DEL_COMMAND, kfvFieldsValues(kco));
+
+    if (op == REDIS_FLEX_COUNTER_COMMAND_SET_GROUP)
+        return processFlexCounterGroupEvent(key, SET_COMMAND, kfvFieldsValues(kco));
+
+    if (op == REDIS_FLEX_COUNTER_COMMAND_DEL_GROUP)
+        return processFlexCounterGroupEvent(key, DEL_COMMAND, kfvFieldsValues(kco));
 
     SWSS_LOG_THROW("event op '%s' is not implemented, FIXME", op.c_str());
 }
@@ -2442,18 +2457,44 @@ void Syncd::processFlexCounterGroupEvent( // TODO must be moved to go via ASIC c
 
     WatchdogScope ws(m_timerWatchdog, op + ":" + groupName, &kco);
 
+    processFlexCounterGroupEvent(groupName, op, values, false);
+}
+
+sai_status_t Syncd::processFlexCounterGroupEvent(
+        _In_ const std::string &groupName,
+        _In_ const std::string &op,
+        _In_ const std::vector<swss::FieldValueTuple> &values,
+        _In_ bool fromAsicChannel)
+{
+    SWSS_LOG_ENTER();
+
     if (op == SET_COMMAND)
     {
         m_manager->addCounterPlugin(groupName, values);
+        if (fromAsicChannel)
+        {
+            m_flexCounterGroupTable->set(groupName, values);
+        }
     }
     else if (op == DEL_COMMAND)
     {
+        if (fromAsicChannel)
+        {
+            m_flexCounterGroupTable->del(groupName);
+        }
         m_manager->removeCounterPlugins(groupName);
     }
     else
     {
         SWSS_LOG_ERROR("unknown command: %s", op.c_str());
     }
+
+    if (fromAsicChannel)
+    {
+        sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
+    }
+
+    return SAI_STATUS_SUCCESS;
 }
 
 void Syncd::processFlexCounterEvent( // TODO must be moved to go via ASIC channel queue
@@ -2469,8 +2510,20 @@ void Syncd::processFlexCounterEvent( // TODO must be moved to go via ASIC channe
 
     auto& key = kfvKey(kco);
     auto& op = kfvOp(kco);
+    auto& values = kfvFieldsValues(kco);
 
     WatchdogScope ws(m_timerWatchdog, op + ":" + key, &kco);
+
+    processFlexCounterEvent(key, op, values, false);
+}
+
+sai_status_t Syncd::processFlexCounterEvent(
+        _In_ const std::string &key,
+        _In_ const std::string &op,
+        _In_ const std::vector<swss::FieldValueTuple> &values,
+        _In_ bool fromAsicChannel)
+{
+    SWSS_LOG_ENTER();
 
     auto delimiter = key.find_first_of(":");
 
@@ -2478,11 +2531,18 @@ void Syncd::processFlexCounterEvent( // TODO must be moved to go via ASIC channe
     {
         SWSS_LOG_ERROR("Failed to parse the key %s", key.c_str());
 
-        return; // if key is invalid there is no need to process this event again
+        if (fromAsicChannel)
+        {
+            sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_FAILURE);
+        }
+
+        return SAI_STATUS_FAILURE; // if key is invalid there is no need to process this event again
     }
 
     auto groupName = key.substr(0, delimiter);
     auto strVid = key.substr(delimiter + 1);
+
+    auto effective_op = op;
 
     sai_object_id_t vid;
     sai_deserialize_object_id(strVid, vid);
@@ -2491,26 +2551,46 @@ void Syncd::processFlexCounterEvent( // TODO must be moved to go via ASIC channe
 
     if (!m_translator->tryTranslateVidToRid(vid, rid))
     {
-        SWSS_LOG_WARN("port VID %s, was not found (probably port was removed/splitted) and will remove from counters now",
-                sai_serialize_object_id(vid).c_str());
-
-        op = DEL_COMMAND;
+        if (fromAsicChannel)
+        {
+            SWSS_LOG_ERROR("port VID %s, was not found (probably port was removed/splitted) and will remove from counters now",
+                           sai_serialize_object_id(vid).c_str());
+        }
+        else
+        {
+            SWSS_LOG_WARN("port VID %s, was not found (probably port was removed/splitted) and will remove from counters now",
+                          sai_serialize_object_id(vid).c_str());
+        }
+        effective_op = DEL_COMMAND;
     }
 
-    const auto values = kfvFieldsValues(kco);
-
-    if (op == SET_COMMAND)
+    if (effective_op == SET_COMMAND)
     {
         m_manager->addCounter(vid, rid, groupName, values);
+        if (fromAsicChannel)
+        {
+            m_flexCounterTable->set(key, values);
+        }
     }
-    else if (op == DEL_COMMAND)
+    else if (effective_op == DEL_COMMAND)
     {
+        if (fromAsicChannel)
+        {
+            m_flexCounterTable->del(key);
+        }
         m_manager->removeCounter(vid, groupName);
     }
     else
     {
         SWSS_LOG_ERROR("unknown command: %s", op.c_str());
     }
+
+    if (fromAsicChannel)
+    {
+        sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
+    }
+
+    return SAI_STATUS_SUCCESS;
 }
 
 void Syncd::syncUpdateRedisQuadEvent(

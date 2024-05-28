@@ -15,6 +15,7 @@ tests_SOURCES = \
 				../../lib/Channel.cpp \
 				MockMeta.cpp \
 				TestAttrKeyMap.cpp \
+				TestDummySaiInterface.cpp \
 				TestGlobals.cpp \
 				TestMetaKeyHasher.cpp \
 				TestNotificationFactory.cpp \
@@ -23,6 +24,7 @@ tests_SOURCES = \
 				TestNotificationPortStateChange.cpp \
 				TestNotificationQueuePfcDeadlock.cpp \
 				TestNotificationSwitchShutdownRequest.cpp \
+				TestNotificationSwitchAsicSdkHealthEvent.cpp \
 				TestNotificationSwitchStateChange.cpp \
 				TestNotificationBfdSessionStateChange.cpp \
 				TestOidRefCounter.cpp \
