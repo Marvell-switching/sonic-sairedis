@@ -26,6 +26,7 @@ static const std::string COUNTER_TYPE_MACSEC_SA = "MACSEC SA Counter";
 static const std::string COUNTER_TYPE_FLOW = "Flow Counter";
 static const std::string COUNTER_TYPE_TUNNEL = "Tunnel Counter";
 static const std::string COUNTER_TYPE_BUFFER_POOL = "Buffer Pool Counter";
+static const std::string COUNTER_TYPE_POLICER = "Policer Counter";
 static const std::string ATTR_TYPE_QUEUE = "Queue Attribute";
 static const std::string ATTR_TYPE_PG = "Priority Group Attribute";
 static const std::string ATTR_TYPE_MACSEC_SA = "MACSEC SA Attribute";
@@ -1163,6 +1164,10 @@ void FlexCounter::addCounterPlugin(
         {
             getCounterContext(COUNTER_TYPE_FLOW)->addPlugins(shaStrings);
         }
+        else if (field == POLICER_PLUGIN_FIELD)
+        {
+            getCounterContext(COUNTER_TYPE_POLICER)->addPlugins(shaStrings);
+        }
         else
         {
             SWSS_LOG_ERROR("Field is not supported %s", field.c_str());
@@ -1312,6 +1317,13 @@ std::shared_ptr<BaseCounterContext> FlexCounter::createCounterContext(
     else if (context_name == ATTR_TYPE_ACL_COUNTER)
     {
         return std::make_shared<AttrContext<sai_acl_counter_attr_t>>(context_name, SAI_OBJECT_TYPE_ACL_COUNTER, m_vendorSai.get(), m_statsMode);
+    }
+    else if (context_name == COUNTER_TYPE_POLICER)
+    {
+        SWSS_LOG_INFO("createCounterContext counter type %s", context_name.c_str());
+        auto context = std::make_shared<CounterContext<sai_policer_stat_t>>(context_name, SAI_OBJECT_TYPE_POLICER, m_vendorSai.get(), m_statsMode);
+        context->always_check_supported_counters = true;
+        return context;
     }
 
     SWSS_LOG_THROW("Invalid counter type %s", context_name.c_str());
@@ -1580,6 +1592,14 @@ void FlexCounter::removeCounter(
             removeDataFromCountersDB(vid, ":TRAP");
         }
     }
+    else if (objectType == SAI_OBJECT_TYPE_POLICER)
+    {
+        if (hasCounterContext(COUNTER_TYPE_POLICER))
+        {
+            getCounterContext(COUNTER_TYPE_POLICER)->removeObject(vid);
+            // removeDataFromCountersDB(vid, ":POLICER");
+        }
+    }
     else
     {
         SWSS_LOG_ERROR("Object type for removal not supported, %s",
@@ -1709,6 +1729,14 @@ void FlexCounter::addCounter(
         else if (objectType == SAI_OBJECT_TYPE_COUNTER && field == FLOW_COUNTER_ID_LIST)
         {
             getCounterContext(COUNTER_TYPE_FLOW)->addObject(
+                    vid,
+                    rid,
+                    idStrings,
+                    "");
+        }
+        else if (objectType == SAI_OBJECT_TYPE_POLICER && field == POLICER_COUNTER_ID_LIST)
+        {
+            getCounterContext(COUNTER_TYPE_POLICER)->addObject(
                     vid,
                     rid,
                     idStrings,
