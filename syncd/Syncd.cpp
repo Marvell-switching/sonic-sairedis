@@ -2796,6 +2796,12 @@ sai_status_t Syncd::processQuadEvent(
 {
     SWSS_LOG_ENTER();
 
+    using std::chrono::high_resolution_clock;
+    using std::chrono::duration;
+
+    auto amir_debug_flag = false;
+    duration<double, std::milli> t1, t2, ms_double;
+
     const std::string& key = kfvKey(kco);
     const std::string& op = kfvOp(kco);
 
@@ -2814,6 +2820,10 @@ sai_status_t Syncd::processQuadEvent(
     for (auto& v: values)
     {
         SWSS_LOG_DEBUG("attr: %s: %s", fvField(v).c_str(), fvValue(v).c_str());
+        if (fvField(v).c_str() == "SAI_SWITCH_ATTR_INIT_SWITCH"){
+            amir_debug_flag = true;
+            SWSS_LOG_NOTICE("Amir: SAI_SWITCH_ATTR_INIT_SWITCH is set");
+        }
     }
 
     SaiAttributeList list(metaKey.objecttype, values, false);
@@ -2865,13 +2875,23 @@ sai_status_t Syncd::processQuadEvent(
 
         SWSS_LOG_DEBUG("translating VID to RIDs on all attributes");
 
+        t1 = high_resolution_clock::now();
         m_translator->translateVidToRid(metaKey.objecttype, attr_count, attr_list);
+        t2 = high_resolution_clock::now();
+        ms_double = t2 - t1;
+        if (amir_debug_flag){
+            SWSS_LOG_NOTICE("Amir: Time taken for translating VID to RID is %f ms", ms_double.count());
+        }
     }
 
     auto info = sai_metadata_get_object_type_info(metaKey.objecttype);
 
     sai_status_t status;
+    using std::chrono::high_resolution_clock;
+    using std::chrono::duration;
 
+
+    t1 = high_resolution_clock::now();
     if (info->isnonobjectid)
     {
         if (info->objecttype == SAI_OBJECT_TYPE_ROUTE_ENTRY)
@@ -2895,7 +2915,12 @@ sai_status_t Syncd::processQuadEvent(
     {
         status = processOid(metaKey.objecttype, strObjectId, api, attr_count, attr_list);
     }
+    t2 = high_resolution_clock::now();
 
+    ms_double = t2 - t1;
+    if (amir_debug_flag){
+        SWSS_LOG_NOTICE("Amir: Time taken for processing SAI_SWITCH_ATTR_INIT_SWITCH is %f ms", key.c_str(), ms_double.count());
+    }
     if (api == SAI_COMMON_API_GET)
     {
         if (status != SAI_STATUS_SUCCESS)
