@@ -2796,13 +2796,10 @@ sai_status_t Syncd::processQuadEvent(
 {
     SWSS_LOG_ENTER();
 
-    using std::chrono::high_resolution_clock;
-    using std::chrono::duration;
-
     auto amir_debug_flag = false;
-    std::chrono::time_point<std::chrono::high_resolution_clock> t1, t2;
+    static PerformanceIntervalTimer amir_timer_vid_to_rid("amir: SAI_SWITCH_ATTR_INIT_SWITCH Syncd::processQuadEvent::translateVidToRid for SAI_SWITCH_ATTR_INIT_SWITCH", 0);
+    static PerformanceIntervalTimer amir_timer_process("amir: Syncd::processQuadEvent::processEntry(SAI_SWITCH_ATTR_INIT_SWITCH)", 0);
 
-    std::chrono::duration<double, std::milli> ms_double;
 
     const std::string& key = kfvKey(kco);
     const std::string& op = kfvOp(kco);
@@ -2877,12 +2874,11 @@ sai_status_t Syncd::processQuadEvent(
 
         SWSS_LOG_DEBUG("translating VID to RIDs on all attributes");
 
-        t1 = std::chrono::high_resolution_clock::now();
+        amir_timer_vid_to_rid.start();
         m_translator->translateVidToRid(metaKey.objecttype, attr_count, attr_list);
-        t2 = std::chrono::high_resolution_clock::now();
-        ms_double = t2 - t1;
+        amir_timer_vid_to_rid.stop();
         if (amir_debug_flag){
-            SWSS_LOG_NOTICE("Amir: Time taken for translating VID to RID is %f ms", ms_double.count());
+            amir_timer_vid_to_rid.inc();
         }
     }
 
@@ -2890,7 +2886,7 @@ sai_status_t Syncd::processQuadEvent(
 
     sai_status_t status;
 
-    t1 = std::chrono::high_resolution_clock::now();
+    amir_timer_process.start();
     if (info->isnonobjectid)
     {
         if (info->objecttype == SAI_OBJECT_TYPE_ROUTE_ENTRY)
@@ -2914,11 +2910,10 @@ sai_status_t Syncd::processQuadEvent(
     {
         status = processOid(metaKey.objecttype, strObjectId, api, attr_count, attr_list);
     }
-    t2 = std::chrono::high_resolution_clock::now();
+    amir_timer_process.stop();
 
-    ms_double = t2 - t1;
     if (amir_debug_flag){
-        SWSS_LOG_NOTICE("Amir: Time taken for processing SAI_SWITCH_ATTR_INIT_SWITCH is %f ms", key.c_str(), ms_double.count());
+        amir_timer_process.inc();
     }
     if (api == SAI_COMMON_API_GET)
     {
