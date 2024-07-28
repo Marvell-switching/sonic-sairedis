@@ -2796,10 +2796,13 @@ sai_status_t Syncd::processQuadEvent(
 {
     SWSS_LOG_ENTER();
 
+    using std::chrono::high_resolution_clock;
+    using std::chrono::duration;
+
     auto amir_debug_flag = false;
     std::chrono::time_point<std::chrono::high_resolution_clock> t1, t2;
 
-    duration<double, std::milli> ms_double;
+    std::chrono::duration<double, std::milli> ms_double;
 
     const std::string& key = kfvKey(kco);
     const std::string& op = kfvOp(kco);
@@ -2886,9 +2889,6 @@ sai_status_t Syncd::processQuadEvent(
     auto info = sai_metadata_get_object_type_info(metaKey.objecttype);
 
     sai_status_t status;
-    using std::chrono::high_resolution_clock;
-    using std::chrono::duration;
-
 
     t1 = std::chrono::high_resolution_clock::now();
     if (info->isnonobjectid)
