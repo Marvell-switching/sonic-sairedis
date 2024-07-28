@@ -2796,8 +2796,6 @@ sai_status_t Syncd::processQuadEvent(
 {
     SWSS_LOG_ENTER();
 
-    using std::chrono::duration;
-
     auto amir_debug_flag = false;
     std::chrono::time_point<std::chrono::high_resolution_clock> t1, t2;
 
@@ -2876,9 +2874,9 @@ sai_status_t Syncd::processQuadEvent(
 
         SWSS_LOG_DEBUG("translating VID to RIDs on all attributes");
 
-        t1 = high_resolution_clock::now();
+        t1 = std::chrono::high_resolution_clock::now();
         m_translator->translateVidToRid(metaKey.objecttype, attr_count, attr_list);
-        t2 = high_resolution_clock::now();
+        t2 = std::chrono::high_resolution_clock::now();
         ms_double = t2 - t1;
         if (amir_debug_flag){
             SWSS_LOG_NOTICE("Amir: Time taken for translating VID to RID is %f ms", ms_double.count());
@@ -2892,7 +2890,7 @@ sai_status_t Syncd::processQuadEvent(
     using std::chrono::duration;
 
 
-    t1 = high_resolution_clock::now();
+    t1 = std::chrono::high_resolution_clock::now();
     if (info->isnonobjectid)
     {
         if (info->objecttype == SAI_OBJECT_TYPE_ROUTE_ENTRY)
@@ -2916,7 +2914,7 @@ sai_status_t Syncd::processQuadEvent(
     {
         status = processOid(metaKey.objecttype, strObjectId, api, attr_count, attr_list);
     }
-    t2 = high_resolution_clock::now();
+    t2 = std::chrono::high_resolution_clock::now();
 
     ms_double = t2 - t1;
     if (amir_debug_flag){
