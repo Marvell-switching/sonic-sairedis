@@ -2796,11 +2796,12 @@ sai_status_t Syncd::processQuadEvent(
 {
     SWSS_LOG_ENTER();
 
-    using std::chrono::high_resolution_clock;
     using std::chrono::duration;
 
     auto amir_debug_flag = false;
-    duration<double, std::milli> t1, t2, ms_double;
+    std::chrono::time_point<std::chrono::high_resolution_clock> t1, t2;
+
+    duration<double, std::milli> ms_double;
 
     const std::string& key = kfvKey(kco);
     const std::string& op = kfvOp(kco);
@@ -2820,7 +2821,7 @@ sai_status_t Syncd::processQuadEvent(
     for (auto& v: values)
     {
         SWSS_LOG_DEBUG("attr: %s: %s", fvField(v).c_str(), fvValue(v).c_str());
-        if (fvField(v).c_str() == "SAI_SWITCH_ATTR_INIT_SWITCH"){
+        if (fvField(v) == "SAI_SWITCH_ATTR_INIT_SWITCH"){
             amir_debug_flag = true;
             SWSS_LOG_NOTICE("Amir: SAI_SWITCH_ATTR_INIT_SWITCH is set");
         }
