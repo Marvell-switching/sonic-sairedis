@@ -62,6 +62,7 @@ Syncd::Syncd(
     m_veryFirstRun(false),
     m_enableSyncMode(false),
     m_timerWatchdog(cmd->m_watchdogWarnTimeSpan * WD_DELAY_FACTOR)
+    amir_debug_flag{false}
 {
     SWSS_LOG_ENTER();
 
@@ -2796,9 +2797,8 @@ sai_status_t Syncd::processQuadEvent(
 {
     SWSS_LOG_ENTER();
 
-    auto amir_debug_flag = false;
+    amir_debug_flag = false;
     static PerformanceIntervalTimer amir_timer_vid_to_rid("amir: SAI_SWITCH_ATTR_INIT_SWITCH Syncd::processQuadEvent::translateVidToRid for SAI_SWITCH_ATTR_INIT_SWITCH", 0);
-    static PerformanceIntervalTimer amir_timer_process("amir: Syncd::processQuadEvent::processEntry(SAI_SWITCH_ATTR_INIT_SWITCH)", 0);
 
 
     const std::string& key = kfvKey(kco);
@@ -2886,7 +2886,6 @@ sai_status_t Syncd::processQuadEvent(
 
     sai_status_t status;
 
-    amir_timer_process.start();
     if (info->isnonobjectid)
     {
         if (info->objecttype == SAI_OBJECT_TYPE_ROUTE_ENTRY)
@@ -2909,11 +2908,6 @@ sai_status_t Syncd::processQuadEvent(
     else
     {
         status = processOid(metaKey.objecttype, strObjectId, api, attr_count, attr_list);
-    }
-    amir_timer_process.stop();
-
-    if (amir_debug_flag){
-        amir_timer_process.inc();
     }
     if (api == SAI_COMMON_API_GET)
     {
@@ -2964,7 +2958,7 @@ sai_status_t Syncd::processQuadEvent(
     {
         sendApiResponse(api, status);
     }
-
+    SWSS_LOG_NOTICE("Amir: QuadEvent Exit")
     syncUpdateRedisQuadEvent(status, api, kco);
 
     return status;
@@ -3054,8 +3048,13 @@ sai_status_t Syncd::processOidCreate(
 
     sai_object_id_t objectRid;
 
+    static PerformanceIntervalTimer amir_timer_process("amir: Syncd::processOidCreate(SAI_SWITCH_ATTR_INIT_SWITCH)", 0);
+    SWSS_LOG_NOTICE("amir: m_vendorSai->create enter");
+    amir_timer_process.start();
     sai_status_t status = m_vendorSai->create(objectType, &objectRid, switchRid, attr_count, attr_list);
-
+    amir_timer_process.stop();
+    SWSS_LOG_NOTICE("amir: m_vendorSai->create exit");
+    amir_timer_process.inc();
     if (status == SAI_STATUS_SUCCESS)
     {
         /*

@@ -67,6 +67,8 @@ namespace syncd
             void processEvent(
                     _In_ sairedis::SelectableChannel& consumer);
 
+        bool amir_debug_flag
+
             sai_status_t processQuadEventInInitViewMode(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
