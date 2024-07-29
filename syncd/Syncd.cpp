@@ -61,8 +61,8 @@ Syncd::Syncd(
     m_vendorSai(vendorSai),
     m_veryFirstRun(false),
     m_enableSyncMode(false),
-    m_timerWatchdog(cmd->m_watchdogWarnTimeSpan * WD_DELAY_FACTOR)
-    amir_debug_flag{false}
+    m_timerWatchdog(cmd->m_watchdogWarnTimeSpan * WD_DELAY_FACTOR),
+    amir_debug_flag(false)
 {
     SWSS_LOG_ENTER();
 
@@ -3054,7 +3054,10 @@ sai_status_t Syncd::processOidCreate(
     sai_status_t status = m_vendorSai->create(objectType, &objectRid, switchRid, attr_count, attr_list);
     amir_timer_process.stop();
     SWSS_LOG_NOTICE("amir: m_vendorSai->create exit");
-    amir_timer_process.inc();
+    if (amir_debug_flag){
+        amir_timer_process.inc();
+        amir_debug_flag = false;
+    }
     if (status == SAI_STATUS_SUCCESS)
     {
         /*
