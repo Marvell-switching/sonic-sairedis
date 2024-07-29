@@ -2958,7 +2958,7 @@ sai_status_t Syncd::processQuadEvent(
     {
         sendApiResponse(api, status);
     }
-    SWSS_LOG_NOTICE("Amir: QuadEvent Exit")
+    SWSS_LOG_NOTICE("Amir: QuadEvent Exit");
     syncUpdateRedisQuadEvent(status, api, kco);
 
     return status;
