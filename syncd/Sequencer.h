@@ -25,6 +25,9 @@ private:
     Sequencer(const Sequencer&) = delete;
     Sequencer& operator=(const Sequencer&) = delete;
 
+    // Loop and send responses in the correct order
+    void loopAndSendSequencedResponse();
+
     // Reset the sequence number to avoid overflow
     void resetSequence();
 

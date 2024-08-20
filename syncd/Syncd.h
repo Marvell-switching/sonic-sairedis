@@ -534,5 +534,7 @@ namespace syncd
             TimerWatchdog m_timerWatchdog;
 
             std::set<sai_object_id_t> m_createdInInitView;
+
+            std::thread m_response_thread;
     };
 }

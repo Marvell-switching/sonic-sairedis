@@ -207,6 +207,8 @@ Syncd::Syncd(
 
     m_breakConfig = BreakConfigParser::parseBreakConfig(m_commandLineOptions->m_breakConfig);
 
+    m_response_thread = std::thread(&Sequencer::loopAndSendSequencedResponse, m_sequencer);
+
     SWSS_LOG_NOTICE("syncd started");
 }
 
