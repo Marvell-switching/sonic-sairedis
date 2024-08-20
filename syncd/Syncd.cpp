@@ -317,9 +317,6 @@ void Syncd::processEvent(
         consumer.pop(kco, isInitViewMode());
 
         processSingleEvent(kco);
-
-        push to ring buffer
-        push_to_right_buffer(Sequencer.AddTask(lam = processSingleEvent(kco)))
     }
     while (!consumer.empty());
 }
@@ -345,25 +342,25 @@ sai_status_t Syncd::processSingleEvent(
     WatchdogScope ws(m_timerWatchdog, op + ":" + key, &kco);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
-        return processQuadEvent(SAI_COMMON_API_CREATE, kco, index);
+        return processQuadEvent(SAI_COMMON_API_CREATE, kco, m_sequencer.getSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_REMOVE)
-        return processQuadEvent(SAI_COMMON_API_REMOVE, kco);
+        return processQuadEvent(SAI_COMMON_API_REMOVE, kco, m_sequencer.getSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_SET)
-        return processQuadEvent(SAI_COMMON_API_SET, kco);
+        return processQuadEvent(SAI_COMMON_API_SET, kco, m_sequencer.getSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_GET)
-        return processQuadEvent(SAI_COMMON_API_GET, kco);
+        return processQuadEvent(SAI_COMMON_API_GET, kco, m_sequencer.getSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, m_sequencer.getSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, m_sequencer.getSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_SET)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, m_sequencer.getSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_NOTIFY)
         return processNotifySyncd(kco);
@@ -797,7 +794,8 @@ sai_status_t Syncd::processGetStatsEvent(
 
 sai_status_t Syncd::processBulkQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ int seqIndex = -1)
 {
     // part 1: get the key
     SWSS_LOG_ENTER();
@@ -1674,7 +1672,8 @@ sai_status_t Syncd::processBulkEntry(
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
-        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+        _In_ int seqIndex = -1)
 {
     SWSS_LOG_ENTER();
 
@@ -1712,7 +1711,15 @@ sai_status_t Syncd::processBulkEntry(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            if(seqIndex != -1)
+            {
+                sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            }
+            else
+            {
+                sendApiResponseSequence(api, all, (uint32_t)objectIds.size(), statuses.data(), seqIndex);
+            }
+
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
             return all;
@@ -2029,7 +2036,8 @@ sai_status_t Syncd::processBulkOid(
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
-        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+        _In_ int seqIndex)
 {
     SWSS_LOG_ENTER();
 
@@ -2065,7 +2073,13 @@ sai_status_t Syncd::processBulkOid(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            if(seqIndex == -1) {
+                sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            }
+            else {
+                sendApiResponseSequence(api, all, (uint32_t)objectIds.size(), statuses.data(), seqIndex);
+            } 
+            
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
             return all;
@@ -2445,6 +2459,25 @@ void Syncd::sendApiResponse(
             sai_serialize_common_api(api).c_str());
 }
 
+
+void Syncd::sendApiResponseSequence(
+        _In_ sai_common_api_t api,
+        _In_ sai_status_t status,
+        _In_ uint32_t object_count,
+        _In_ sai_status_t* object_statuses,
+        _In_ int seqIndex)
+{
+    SWSS_LOG_ENTER();
+
+    if(seqIndex >= 0) {
+        auto lambda = [=]() {
+            sendApiResponse(api, status, object_count, object_statuses);
+        };
+
+        m_sequencer.addSequenceResponse(lambda, seqIndex);
+    }
+}
+
 void Syncd::processFlexCounterGroupEvent( // TODO must be moved to go via ASIC channel queue
         _In_ swss::ConsumerTable& consumer)
 {
@@ -2797,7 +2830,8 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
 
 sai_status_t Syncd::processQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco, int index)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco, 
+        _In_ int seqIndex = -1)
 {
     SWSS_LOG_ENTER();
 
@@ -2915,7 +2949,13 @@ sai_status_t Syncd::processQuadEvent(
 
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
 
-        sendGetResponse(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list);
+        
+        if(seqIndex == -1) {
+            sendGetResponse(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list);
+        }
+        else {
+            sendGetResponseSequence(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list, seqIndex = seqIndex);
+        } 
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
@@ -2948,8 +2988,12 @@ sai_status_t Syncd::processQuadEvent(
     }
     else // non GET api, status is SUCCESS
     {
-        sendApiResponse(api, status);
-        seqnece.sendresonse(lambda = sequn_nu, sendApiResponse)
+        if(seqIndex == -1) {
+            sendApiResponse(api, status);
+        }
+        else {
+            sendApiResponseSequence(api, status, seqIndex = seqIndex);
+        }       
     }
 
     syncUpdateRedisQuadEvent(status, api, kco);
@@ -3394,6 +3438,25 @@ void Syncd::sendGetResponse(
     m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
 
     SWSS_LOG_INFO("response for GET api was send");
+}
+
+void Syncd::sendGetResponseSequence(
+        _In_ sai_object_type_t objectType,
+        _In_ const std::string& strObjectId,
+        _In_ sai_object_id_t switchVid,
+        _In_ sai_status_t status,
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list,
+        _In_ int seqIndex) {
+    SWSS_LOG_ENTER();
+
+    if(seqIndex >= 0) {
+        auto lambda = [=]() {
+            sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
+        };
+
+        m_sequencer.addSequenceResponse(lambda, seqIndex);
+    }
 }
 
 void Syncd::snoopGetResponse(
