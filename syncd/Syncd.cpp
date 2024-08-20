@@ -317,6 +317,9 @@ void Syncd::processEvent(
         consumer.pop(kco, isInitViewMode());
 
         processSingleEvent(kco);
+
+        push to ring buffer
+        push_to_right_buffer(Sequencer.AddTask(lam = processSingleEvent(kco)))
     }
     while (!consumer.empty());
 }
@@ -338,10 +341,11 @@ sai_status_t Syncd::processSingleEvent(
         return SAI_STATUS_SUCCESS;
     }
 
+    Seequence.Allocate()
     WatchdogScope ws(m_timerWatchdog, op + ":" + key, &kco);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
-        return processQuadEvent(SAI_COMMON_API_CREATE, kco);
+        return processQuadEvent(SAI_COMMON_API_CREATE, kco, index);
 
     if (op == REDIS_ASIC_STATE_COMMAND_REMOVE)
         return processQuadEvent(SAI_COMMON_API_REMOVE, kco);
@@ -795,6 +799,7 @@ sai_status_t Syncd::processBulkQuadEvent(
         _In_ sai_common_api_t api,
         _In_ const swss::KeyOpFieldsValuesTuple &kco)
 {
+    // part 1: get the key
     SWSS_LOG_ENTER();
 
     const std::string& key = kfvKey(kco); // objectType:count
@@ -804,6 +809,7 @@ sai_status_t Syncd::processBulkQuadEvent(
     sai_object_type_t objectType;
     sai_deserialize_object_type(strObjectType, objectType);
 
+    // part 2: send to lambda (correct ring buffer)
     const std::vector<swss::FieldValueTuple> &values = kfvFieldsValues(kco);
 
     std::vector<std::vector<swss::FieldValueTuple>> strAttributes;
@@ -2791,7 +2797,7 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
 
 sai_status_t Syncd::processQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco, int index)
 {
     SWSS_LOG_ENTER();
 
@@ -2943,6 +2949,7 @@ sai_status_t Syncd::processQuadEvent(
     else // non GET api, status is SUCCESS
     {
         sendApiResponse(api, status);
+        seqnece.sendresonse(lambda = sequn_nu, sendApiResponse)
     }
 
     syncUpdateRedisQuadEvent(status, api, kco);
