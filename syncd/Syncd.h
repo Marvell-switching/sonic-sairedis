@@ -31,12 +31,20 @@
 
 namespace syncd
 {
+        #define ORCH_RING_SIZE 30
+        #define SLEEP_MSECONDS 500
+        using AnyTask = std::function<void()>;
+        template<typename DataType, int RingSize>
+        class RingBuffer;
+        typedef RingBuffer<AnyTask, ORCH_RING_SIZE> SyncdRing;
+ 
     class Syncd
     {
         private:
 
             Syncd(const Syncd&) = delete;
             Syncd& operator=(const Syncd&) = delete;
+            std::thread ring_thread;
 
         public:
 
@@ -150,6 +158,15 @@ namespace syncd
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+
+            sai_status_t processQuadEventTag(
+                    _In_ sai_common_api_t api,
+                    _In_ const std::string &key,
+                    _In_ const std::string &op,
+                    _In_ const std::string &strObjectId,
+                    _In_ const sai_object_meta_key_t metaKey,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    int sequenceNumber);
 
             sai_status_t processBulkQuadEvent(
                     _In_ sai_common_api_t api,
@@ -426,6 +443,9 @@ namespace syncd
         public: // TODO to private
 
             bool m_asicInitViewMode;
+            void pushRingBuffer(AnyTask&& func);
+            void popRingBuffer();
+            void enableRingBuffer();
 
             std::shared_ptr<FlexCounterManager> m_manager;
 
@@ -536,5 +556,128 @@ namespace syncd
             TimerWatchdog m_timerWatchdog;
 
             std::set<sai_object_id_t> m_createdInInitView;
+        
+        protected:
+                /* Orchdaemon instance points to the same ring buffer during its lifetime */
+                SyncdRing* gRingBuffer = nullptr;
+                std::atomic<bool> ring_thread_exited{false};
     };
+        typedef std::map<std::string, std::string> EventMap;
+        template<typename DataType, int RingSize>
+        class RingBuffer
+        {
+        private:
+        static RingBuffer<DataType, RingSize>* instance;
+        std::vector<DataType> buffer;
+        int head = 0;
+        int tail = 0;
+        EventMap m_eventMap;
+        protected:
+        RingBuffer<DataType, RingSize>(): buffer(RingSize) {}
+        ~RingBuffer<DataType, RingSize>() {
+                delete instance;
+        }
+        public:
+        RingBuffer<DataType, RingSize>(const RingBuffer<DataType, RingSize>&) = delete;
+        RingBuffer<DataType, RingSize>(RingBuffer<DataType, RingSize>&&) = delete;
+        RingBuffer<DataType, RingSize>& operator= (const RingBuffer<DataType, RingSize>&) = delete;
+        RingBuffer<DataType, RingSize>& operator= (RingBuffer<DataType, RingSize>&&) = delete;
+        static RingBuffer<DataType, RingSize>* Get();
+        bool Started = false;
+        bool Idle = true;
+        std::mutex mtx;
+        std::condition_variable cv;
+        bool IsFull();
+        bool IsEmpty();
+        bool push(DataType entry);
+        bool pop(DataType& entry);
+        DataType& HeadEntry();
+        void addEvent(std::string* executor);
+        void doTask();
+        bool tasksPending();
+        bool Serves(const std::string& tableName);
+        };
+
+        
+template<typename DataType, int RingSize>
+RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::instance = nullptr;
+template<typename DataType, int RingSize>
+RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::Get()
+{
+    if (instance == nullptr) {
+        instance = new RingBuffer<DataType, RingSize>();
+        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)instance);
+    }
+    return instance;
+}
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::IsFull()
+{
+    return (tail + 1) % RingSize == head;
+}
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::IsEmpty()
+{
+    return tail == head;
+}
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::push(DataType ringEntry)
+{
+    if (IsFull())
+        return false;
+    buffer[tail] = std::move(ringEntry);
+    tail = (tail + 1) % RingSize;
+    return true;
+}
+template<typename DataType, int RingSize>
+DataType& RingBuffer<DataType, RingSize>::HeadEntry() {
+    return buffer[head];
+}
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::pop(DataType& ringEntry)
+{
+    if (IsEmpty())
+        return false;
+    ringEntry = std::move(buffer[head]);
+    head = (head + 1) % RingSize;
+    return true;
+}
+template<typename DataType, int RingSize>
+void RingBuffer<DataType, RingSize>::addEvent(std::string* executor)
+{
+//     auto inserted = m_eventMap.emplace(std::piecewise_construct,
+//             std::forward_as_tuple(executor->getName()),
+//             std::forward_as_tuple(executor));
+//     // If there is duplication of executorName in m_eventMap, logic error
+//     if (!inserted.second)
+//     {
+//         SWSS_LOG_THROW("Duplicated executorName in m_eventMap: %s", executor->getName().c_str());
+//     }
+}
+template<typename DataType, int RingSize>
+void RingBuffer<DataType, RingSize>::doTask()
+{
+//     for (auto &it : m_eventMap) {
+//         it.second->drain();
+//     }
+}
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::tasksPending()
+{
+//     for (auto &it : m_eventMap) {
+//         auto consumer = dynamic_cast<Consumer *>(it.second.get());
+//         if (consumer->m_toSync.size())
+//             return true;
+//     }
+    return false;
+}
+template<typename DataType, int RingSize>
+bool RingBuffer<DataType, RingSize>::Serves(const std::string& tableName)
+{
+//     for (auto &it : m_eventMap) {
+//         if (it.first == tableName)
+//             return true;
+//     }
+    return true;
+}
 }

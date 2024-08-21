@@ -207,8 +207,30 @@ Syncd::Syncd(
     }
 
     m_breakConfig = BreakConfigParser::parseBreakConfig(m_commandLineOptions->m_breakConfig);
+    ring_thread = std::thread(&Syncd::popRingBuffer, this);
 
     SWSS_LOG_NOTICE("syncd started");
+}
+
+void Syncd::popRingBuffer()
+{
+    if (!gRingBuffer || gRingBuffer->Started)
+        return;
+    SWSS_LOG_ENTER();
+    gRingBuffer->Started = true;
+    SWSS_LOG_NOTICE("OrchDaemon starts the popRingBuffer thread!");
+    while (!ring_thread_exited)
+    {
+        std::unique_lock<std::mutex> lock(gRingBuffer->mtx);
+        gRingBuffer->cv.wait(lock, [&](){ return !gRingBuffer->IsEmpty(); });
+        gRingBuffer->Idle = false;
+        AnyTask func;
+        while (gRingBuffer->pop(func)) {
+            func();
+        }
+        gRingBuffer->doTask();
+        gRingBuffer->Idle = true;
+    }
 }
 
 Syncd::~Syncd()
@@ -316,8 +338,13 @@ void Syncd::processEvent(
          */
 
         consumer.pop(kco, isInitViewMode());
-
-        processSingleEvent(kco);
+        /*
+        * TODO 
+        * 
+        */
+        pushRingBuffer([=](){
+            processSingleEvent(kco);
+        });
     }
     while (!consumer.empty());
 }
@@ -2880,6 +2907,24 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
     timer.inc(statuses.size());
 }
 
+void Syncd::pushRingBuffer(AnyTask&& func)
+{
+    if (!gRingBuffer || !gRingBuffer->Started) 
+    {
+        func();
+    // } else if (!gRingBuffer->Serves(getName())) {
+    //     while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle) {
+    //         std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
+    //     }
+    //     func();
+    } else {
+        while (!gRingBuffer->push(func)) {
+            SWSS_LOG_WARN("fail to push..ring is full...");
+        }
+        gRingBuffer->cv.notify_one();
+    }
+}
+
 sai_status_t Syncd::processQuadEvent(
         _In_ sai_common_api_t api,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
@@ -2899,7 +2944,19 @@ sai_status_t Syncd::processQuadEvent(
     {
         SWSS_LOG_THROW("invalid object type %s", key.c_str());
     }
+    
+    return processQuadEventTag(api, key, op, strObjectId, metaKey, kco, 0);
+}
 
+sai_status_t Syncd::processQuadEventTag(
+        _In_ sai_common_api_t api,
+        _In_ const std::string &key,
+        _In_ const std::string &op,
+        _In_ const std::string &strObjectId,
+        _In_ const sai_object_meta_key_t metaKey,
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        int sequenceNumber)
+{
     auto& values = kfvFieldsValues(kco);
 
     for (auto& v: values)
