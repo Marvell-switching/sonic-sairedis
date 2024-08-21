@@ -2394,7 +2394,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
 
             status = SAI_STATUS_INVALID_OBJECT_ID;
 
-            sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
+            sendGetResponseSequence(objectType, strObjectId, switchVid, status, attr_count, attr_list);
 
             return status;
         }
@@ -2439,7 +2439,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
      * key.
      */
 
-    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
+    sendGetResponseSequence(objectType, strObjectId, switchVid, status, attr_count, attr_list);
 
     return status;
 }
@@ -3001,7 +3001,7 @@ sai_status_t Syncd::processQuadEvent(
 
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
 
-        sendGetResponse(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list);
+        sendGetResponseSequence(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list, seqIndex);
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
