@@ -342,25 +342,25 @@ sai_status_t Syncd::processSingleEvent(
     WatchdogScope ws(m_timerWatchdog, op + ":" + key, &kco);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
-        return processQuadEvent(SAI_COMMON_API_CREATE, kco);
+        return processQuadEvent(SAI_COMMON_API_CREATE, kco, m_sequencer.allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_REMOVE)
-        return processQuadEvent(SAI_COMMON_API_REMOVE, kco);
+        return processQuadEvent(SAI_COMMON_API_REMOVE, kco, m_sequencer.allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_SET)
-        return processQuadEvent(SAI_COMMON_API_SET, kco);
+        return processQuadEvent(SAI_COMMON_API_SET, kco, m_sequencer.allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_GET)
-        return processQuadEvent(SAI_COMMON_API_GET, kco);
+        return processQuadEvent(SAI_COMMON_API_GET, kco, m_sequencer.allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, m_sequencer.allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, m_sequencer.allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_SET)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, m_sequencer.allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_NOTIFY)
         return processNotifySyncd(kco);
@@ -794,7 +794,8 @@ sai_status_t Syncd::processGetStatsEvent(
 
 sai_status_t Syncd::processBulkQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ int seqIndex)
 {
     SWSS_LOG_ENTER();
 
@@ -876,11 +877,11 @@ sai_status_t Syncd::processBulkQuadEvent(
 
     if (info->isobjectid)
     {
-        return processBulkOid(objectType, objectIds, api, attributes, strAttributes);
+        return processBulkOid(objectType, objectIds, api, attributes, strAttributes, seqIndex);
     }
     else
     {
-        return processBulkEntry(objectType, objectIds, api, attributes, strAttributes);
+        return processBulkEntry(objectType, objectIds, api, attributes, strAttributes, seqIndex);
     }
 }
 
@@ -910,7 +911,7 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
 
             if (info->isnonobjectid)
             {
-                sendApiResponse(api, SAI_STATUS_SUCCESS, (uint32_t)statuses.size(), statuses.data());
+                sendApiResponseSequence(api, SAI_STATUS_SUCCESS, (uint32_t)statuses.size(), statuses.data());
 
                 syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
@@ -929,7 +930,7 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
 
                 default:
 
-                    sendApiResponse(api, SAI_STATUS_SUCCESS, (uint32_t)statuses.size(), statuses.data());
+                    sendApiResponseSequence(api, SAI_STATUS_SUCCESS, (uint32_t)statuses.size(), statuses.data());
 
                     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
@@ -1729,7 +1730,8 @@ sai_status_t Syncd::processBulkEntry(
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
-        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+        _In_ int seqIndex)
 {
     SWSS_LOG_ENTER();
 
@@ -1767,7 +1769,7 @@ sai_status_t Syncd::processBulkEntry(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            sendApiResponseSequence(api, all, (uint32_t)objectIds.size(), statuses.data(), seqIndex);
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
             return all;
@@ -1892,7 +1894,7 @@ sai_status_t Syncd::processBulkEntry(
         statuses[idx] = status;
     }
 
-    sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+    sendApiResponseSequence(api, all, (uint32_t)objectIds.size(), statuses.data());
 
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
@@ -2088,7 +2090,8 @@ sai_status_t Syncd::processBulkOid(
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
-        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes, 
+        _In_ const seqIndex)
 {
     SWSS_LOG_ENTER();
 
@@ -2124,7 +2127,7 @@ sai_status_t Syncd::processBulkOid(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            sendApiResponseSequence(api, all, (uint32_t)objectIds.size(), statuses.data(), seqIndex);
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
             return all;
@@ -2177,7 +2180,7 @@ sai_status_t Syncd::processBulkOid(
         statuses[idx] = status;
     }
 
-    sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+    sendApiResponseSequence(api, all, (uint32_t)objectIds.size(), statuses.data());
 
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
@@ -2270,7 +2273,7 @@ sai_status_t Syncd::processQuadInInitViewModeCreate(
         }
     }
 
-    sendApiResponse(SAI_COMMON_API_CREATE, SAI_STATUS_SUCCESS);
+    sendApiResponseSequence(SAI_COMMON_API_CREATE, SAI_STATUS_SUCCESS);
 
     return SAI_STATUS_SUCCESS;
 }
@@ -2332,7 +2335,7 @@ sai_status_t Syncd::processQuadInInitViewModeRemove(
         m_initViewRemovedVidSet.insert(objectVid);
     }
 
-    sendApiResponse(SAI_COMMON_API_REMOVE, SAI_STATUS_SUCCESS);
+    sendApiResponseSequence(SAI_COMMON_API_REMOVE, SAI_STATUS_SUCCESS);
 
     return SAI_STATUS_SUCCESS;
 }
@@ -2346,7 +2349,7 @@ sai_status_t Syncd::processQuadInInitViewModeSet(
 
     // we support SET api on all objects in init view mode
 
-    sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
+    sendApiResponseSequence(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
 
     return SAI_STATUS_SUCCESS;
 }
@@ -2504,6 +2507,29 @@ void Syncd::sendApiResponse(
             sai_serialize_common_api(api).c_str());
 }
 
+void Syncd::sendApiResponseSequence(
+        _In_ sai_common_api_t api,
+        _In_ sai_status_t status,
+        _In_ uint32_t object_count,
+        _In_ sai_status_t* object_statuses,
+        _In_ int seqIndex)
+{
+    SWSS_LOG_ENTER();
+
+    if(seqIndex != INVALID_SEQUENCE_NUMBER) {
+        // If the response is to be sequenced, then add it to the sequencer
+        auto lambda = [=]() {
+            sendApiResponse(api, status, object_count, object_statuses);
+        };
+
+        m_sequencer.executeFuncInSequence(seqIndex, lambda);
+    }
+    else {
+        // If the response is not to be sequenced, then send it directly
+        sendApiResponse(api, status, object_count, object_statuses);
+    }
+}
+
 void Syncd::processFlexCounterGroupEvent( // TODO must be moved to go via ASIC channel queue
         _In_ swss::ConsumerTable& consumer)
 {
@@ -2555,7 +2581,7 @@ sai_status_t Syncd::processFlexCounterGroupEvent(
 
     if (fromAsicChannel)
     {
-        sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
+        sendApiResponseSequence(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
     }
 
     return SAI_STATUS_SUCCESS;
@@ -2597,7 +2623,7 @@ sai_status_t Syncd::processFlexCounterEvent(
 
         if (fromAsicChannel)
         {
-            sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_FAILURE);
+            sendApiResponseSequence(SAI_COMMON_API_SET, SAI_STATUS_FAILURE);
         }
 
         return SAI_STATUS_FAILURE; // if key is invalid there is no need to process this event again
@@ -2651,7 +2677,7 @@ sai_status_t Syncd::processFlexCounterEvent(
 
     if (fromAsicChannel)
     {
-        sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
+        sendApiResponseSequence(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
     }
 
     return SAI_STATUS_SUCCESS;
@@ -2856,7 +2882,8 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
 
 sai_status_t Syncd::processQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ int seqIndex)
 {
     SWSS_LOG_ENTER();
 
@@ -2978,7 +3005,7 @@ sai_status_t Syncd::processQuadEvent(
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
-        sendApiResponse(api, status);
+        sendApiResponseSequence(api, status, seqIndex=seqIndex);
 
         if (info->isobjectid && api == SAI_COMMON_API_SET)
         {
@@ -3007,7 +3034,7 @@ sai_status_t Syncd::processQuadEvent(
     }
     else // non GET api, status is SUCCESS
     {
-        sendApiResponse(api, status);
+        sendApiResponseSequence(api, status, seqIndex=seqIndex);
     }
 
     syncUpdateRedisQuadEvent(status, api, kco);
@@ -3452,6 +3479,28 @@ void Syncd::sendGetResponse(
     m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
 
     SWSS_LOG_INFO("response for GET api was send");
+}
+
+void Syncd::sendGetResponseSequence(
+        _In_ sai_object_type_t objectType,
+        _In_ const std::string& strObjectId,
+        _In_ sai_object_id_t switchVid,
+        _In_ sai_status_t status,
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list,
+        _In_ int seqIndex) {
+    SWSS_LOG_ENTER();
+
+    if(seqIndex != INVALID_SEQUENCE_NUMBER) {
+        auto lambda = [=]() {
+            sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
+        };
+
+        m_sequencer.executeFuncInSequence(seqIndex, lambda);
+    }
+    else {
+        sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
+    }
 }
 
 void Syncd::snoopGetResponse(

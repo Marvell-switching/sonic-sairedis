@@ -25,6 +25,7 @@
 #include "swss/consumertable.h"
 #include "swss/producertable.h"
 #include "swss/notificationconsumer.h"
+#include "Sequencer.h"
 
 #include <memory>
 
@@ -147,25 +148,29 @@ namespace syncd
 
             sai_status_t processQuadEvent(
                     _In_ sai_common_api_t api,
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkQuadEvent(
                     _In_ sai_common_api_t api,
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkOid(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string> &object_ids,
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes, 
+                    _In_ const seqIndex = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkEntry(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string> &object_ids,
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+                    _In_ const seqIndex = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkCreateEntry(
                     _In_ sai_object_type_t objectType,
@@ -350,6 +355,13 @@ namespace syncd
                     _In_ uint32_t object_count = 0,
                     _In_ sai_status_t * object_statuses = NULL);
 
+            void sendApiResponseSequence(
+                    _In_ sai_common_api_t api,
+                    _In_ sai_status_t status,
+                    _In_ uint32_t object_count = 0,
+                    _In_ sai_status_t * object_statuses = NULL,
+                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+
             void sendGetResponse(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
@@ -357,6 +369,15 @@ namespace syncd
                     _In_ sai_status_t status,
                     _In_ uint32_t attr_count,
                     _In_ sai_attribute_t *attr_list);
+
+            void sendGetResponseSequence(
+                    _In_ sai_object_type_t objectType,
+                    _In_ const std::string& strObjectId,
+                    _In_ sai_object_id_t switchVid,
+                    _In_ sai_status_t status,
+                    _In_ uint32_t attr_count,
+                    _In_ sai_attribute_t *attr_list,
+                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
 
             void sendNotifyResponse(
                     _In_ sai_status_t status);
@@ -399,6 +420,8 @@ namespace syncd
             ServiceMethodTable m_smt;
 
             sai_service_method_table_t m_test_services;
+
+            Sequencer& m_sequencer = Sequencer::getInstance();
 
         public: // TODO to private
 
