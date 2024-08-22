@@ -147,6 +147,7 @@ Syncd::Syncd(
     }
 
     m_client = std::make_shared<RedisClient>(m_dbAsic);
+    m_sequencer = std::make_shared<Sequencer>();
 
     m_processor = std::make_shared<NotificationProcessor>(m_notifications, m_client, std::bind(&Syncd::syncProcessNotification, this, _1));
     m_handler = std::make_shared<NotificationHandler>(m_processor);
@@ -369,25 +370,25 @@ sai_status_t Syncd::processSingleEvent(
     WatchdogScope ws(m_timerWatchdog, op + ":" + key, &kco);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
-        return processQuadEvent(SAI_COMMON_API_CREATE, kco, m_sequencer.allocateSequenceNumber());
+        return processQuadEvent(SAI_COMMON_API_CREATE, kco, m_sequencer->allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_REMOVE)
-        return processQuadEvent(SAI_COMMON_API_REMOVE, kco, m_sequencer.allocateSequenceNumber());
+        return processQuadEvent(SAI_COMMON_API_REMOVE, kco, m_sequencer->allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_SET)
-        return processQuadEvent(SAI_COMMON_API_SET, kco, m_sequencer.allocateSequenceNumber());
+        return processQuadEvent(SAI_COMMON_API_SET, kco, m_sequencer->allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_GET)
-        return processQuadEvent(SAI_COMMON_API_GET, kco, m_sequencer.allocateSequenceNumber());
+        return processQuadEvent(SAI_COMMON_API_GET, kco, m_sequencer->allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, m_sequencer.allocateSequenceNumber());
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, m_sequencer->allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, m_sequencer.allocateSequenceNumber());
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, m_sequencer->allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_SET)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, m_sequencer.allocateSequenceNumber());
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, m_sequencer->allocateSequenceNumber());
 
     if (op == REDIS_ASIC_STATE_COMMAND_NOTIFY)
         return processNotifySyncd(kco);
@@ -2118,7 +2119,7 @@ sai_status_t Syncd::processBulkOid(
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
         _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes, 
-        _In_ const seqIndex)
+        _In_ int seqIndex)
 {
     SWSS_LOG_ENTER();
 
@@ -2549,7 +2550,7 @@ void Syncd::sendApiResponseSequence(
             sendApiResponse(api, status, object_count, object_statuses);
         };
 
-        m_sequencer.executeFuncInSequence(seqIndex, lambda);
+        m_sequencer->executeFuncInSequence(seqIndex, lambda);
     }
     else {
         // If the response is not to be sequenced, then send it directly
@@ -3553,7 +3554,7 @@ void Syncd::sendGetResponseSequence(
             sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
         };
 
-        m_sequencer.executeFuncInSequence(seqIndex, lambda);
+        m_sequencer->executeFuncInSequence(seqIndex, lambda);
     }
     else {
         sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);

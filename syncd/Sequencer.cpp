@@ -1,5 +1,7 @@
 #include "Sequencer.h"
 
+using namespace syncd;
+
 // Helper function to execute all ready responses in order
 void Sequencer::executeReadyResponses() {
     printf("Checking for ready responses in queue...\n");
