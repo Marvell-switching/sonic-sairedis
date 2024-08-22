@@ -158,7 +158,7 @@ namespace syncd
             sai_status_t processQuadEvent(
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processQuadEventTag(
                     _In_ sai_common_api_t api,
@@ -172,7 +172,7 @@ namespace syncd
             sai_status_t processBulkQuadEvent(
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkOid(
                     _In_ sai_object_type_t objectType,
@@ -180,7 +180,7 @@ namespace syncd
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes, 
-                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkEntry(
                     _In_ sai_object_type_t objectType,
@@ -188,7 +188,7 @@ namespace syncd
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
-                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkCreateEntry(
                     _In_ sai_object_type_t objectType,
@@ -378,7 +378,7 @@ namespace syncd
                     _In_ sai_status_t status,
                     _In_ uint32_t object_count = 0,
                     _In_ sai_status_t * object_statuses = NULL,
-                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
 
             void sendGetResponse(
                     _In_ sai_object_type_t objectType,
@@ -395,7 +395,7 @@ namespace syncd
                     _In_ sai_status_t status,
                     _In_ uint32_t attr_count,
                     _In_ sai_attribute_t *attr_list,
-                    _In_ int seqIndex = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
 
             void sendNotifyResponse(
                     _In_ sai_status_t status);
