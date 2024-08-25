@@ -59,6 +59,7 @@ void NotificationHandler::updateNotificationsPointers(
      * Also notice that we are using the same pointers for ALL switches.
      */
 
+    SWSS_LOG_NOTICE("sai_metadata_update_attribute_notification_pointers from NotificationHandler::updateNotificationsPointers");
     sai_metadata_update_attribute_notification_pointers(&m_switchNotifications, attr_count, attr_list);
 }
 

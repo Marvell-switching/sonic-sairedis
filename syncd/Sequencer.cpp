@@ -1,10 +1,12 @@
 #include "Sequencer.h"
+#include "swss/logger.h"
 
 using namespace syncd;
 
 // Helper function to execute all ready responses in order
 void Sequencer::executeReadyResponses() {
-    printf("Checking for ready responses in queue...\n");
+    //printf("Checking for ready responses in queue...\n");
+    SWSS_LOG_NOTICE("multithreaded: Checking for ready responses in queue...");
     while (true) {
         auto it = responses.find(next_seq_to_send);
         if (it == responses.end()) {
@@ -21,6 +23,7 @@ int Sequencer::allocateSequenceNumber() {
     std::lock_guard<std::mutex> lock(mtx);
     int seq = current_seq;
     current_seq++;
+    SWSS_LOG_NOTICE("multithreaded: allocate seq num: %d", seq);
     return seq;
 }
 
@@ -30,7 +33,7 @@ void Sequencer::executeFuncInSequence(int seq, std::function<void()> response_la
     
     if (seq == next_seq_to_send) {
         // If the received sequence is the next one to send, execute it immediately
-        printf("Executing lambda\n");
+        SWSS_LOG_NOTICE("multithreaded: executing reseponse lambda, seq num: %d", seq);
         response_lambda();
         // Increment the next sequence to send
         ++next_seq_to_send;
@@ -39,6 +42,7 @@ void Sequencer::executeFuncInSequence(int seq, std::function<void()> response_la
     } else {
         // If the sequence is not the next to send, store it in the map
         responses[seq] = response_lambda;
-        printf("Storing lambda with seq: %d, next to send: %d\n", seq, next_seq_to_send);
+        SWSS_LOG_NOTICE("Storing lambda with seq: %d, next to send: %d\n", seq, next_seq_to_send);
+        //printf("Storing lambda with seq: %d, next to send: %d\n", seq, next_seq_to_send);
     }
 }

@@ -211,7 +211,6 @@ Syncd::Syncd(
 
     m_breakConfig = BreakConfigParser::parseBreakConfig(m_commandLineOptions->m_breakConfig);
     gRingBuffer = SyncdRing::Get();
-    // Syncd::gRingBuffer = gRingBuffer;
     ring_thread = std::thread(&Syncd::popRingBuffer, this);
 
     SWSS_LOG_NOTICE("syncd started");
@@ -223,20 +222,21 @@ void Syncd::popRingBuffer()
         return;
     SWSS_LOG_ENTER();
     gRingBuffer->Started = true;
-    SWSS_LOG_NOTICE("Syncd starts the popRingBuffer thread!");
+    SWSS_LOG_NOTICE("multithreaded: Syncd starts the popRingBuffer thread!");
     while (!ring_thread_exited)
     {
-        SWSS_LOG_NOTICE("wait popRingBuffer thread!");
+        SWSS_LOG_NOTICE("multithreaded: wait popRingBuffer thread!");
         std::unique_lock<std::mutex> lock(gRingBuffer->mtx);
         gRingBuffer->cv.wait(lock, [&](){ return !gRingBuffer->IsEmpty(); });
-        SWSS_LOG_NOTICE("end waiting popRingBuffer thread!");
+        SWSS_LOG_NOTICE("multithreaded: Stop waiting");
         gRingBuffer->Idle = false;
         AnyTask func;
-        SWSS_LOG_DEBUG("ring_thread_exited!");
         while (gRingBuffer->pop(func)) {
-            SWSS_LOG_DEBUG("popRingBuffer executes!");
+            SWSS_LOG_NOTICE("multithreaded: try to execute func");
             func();
+            SWSS_LOG_NOTICE("multithreaded: Execute func successful");
         }
+        SWSS_LOG_NOTICE("multithreaded: no more functions to execute");
         // lock.unlock();
         gRingBuffer->doTask();
         gRingBuffer->Idle = true;
@@ -353,6 +353,8 @@ void Syncd::processEvent(
         _In_ sairedis::SelectableChannel& consumer)
 {
     SWSS_LOG_ENTER();
+    static int entries = 0;
+    SWSS_LOG_NOTICE("multithreaded: !!!processEvent, ITERATION: %d!!!", entries++);
 
     std::lock_guard<std::mutex> lock(m_mutex);
     do
@@ -366,6 +368,17 @@ void Syncd::processEvent(
          */
 
         consumer.pop(kco, isInitViewMode());
+
+        auto lambda = [=](){
+            SWSS_LOG_NOTICE("multithreaded: inside lambda, start processing event");
+            processSingleEvent(kco);
+            SWSS_LOG_NOTICE("multithreaded: inside lambda, end processing event");
+        };
+        
+        pushRingBuffer(lambda);
+
+        //auto& key = kfvKey(kco);
+        //auto& op = kfvOp(kco);
         /*
         * TODO 
         * 
@@ -374,17 +387,27 @@ void Syncd::processEvent(
     //    LogToModuleFile("1", std::get<0>(kco));
     //    LogToModuleFile("1", std::get<1>(kco));
     //    int i = gdb_mode;
-       if( gdb_mode < 1000){
-            gdb_mode++;
-          processSingleEvent(kco);
-       }
-       else{
+    //    if(op == REDIS_ASIC_STATE_COMMAND_CREATE){
+    //         gdb_mode++;
+    //       processSingleEvent(kco);
+    //    }
+    //    else{
+    //        auto lambda = [=](){
+    //            SWSS_LOG_DEBUG("multithreaded: start processing event");
+    //            processSingleEvent(kco);
+    //            SWSS_LOG_DEBUG("multithreaded: end processing event");
+    //        };
+    //        pushRingBuffer(lambda);
+    //    }
+    //     // processSingleEvent(kco);
+    //    auto lambda = [=](){
+    //     //    point(kco);
+    //         processSingleEvent(kco);
+    //      };
+    //     pushRingBuffer(lambda);
+    //     // processSingleEvent(kco);
+
         
-           auto lambda = [=](){
-               processSingleEvent(kco);
-           };
-           pushRingBuffer(lambda);
-       }     
     }
     while (!consumer.empty());
 }
@@ -397,7 +420,7 @@ sai_status_t Syncd::processSingleEvent(
     auto& key = kfvKey(kco);
     auto& op = kfvOp(kco);
 
-    SWSS_LOG_INFO("key: %s op: %s", key.c_str(), op.c_str());
+    SWSS_LOG_NOTICE("multithreaded: key: %s op: %s", key.c_str(), op.c_str());
 
     if (key.length() == 0)
     {
@@ -865,6 +888,7 @@ sai_status_t Syncd::processBulkQuadEvent(
         _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_INFO("multithreaded: seq=%d, api=%s, key=%s, op=%s", sequenceNumber, sai_serialize_common_api(api).c_str(), kfvKey(kco).c_str(), kfvOp(kco).c_str());
 
     const std::string& key = kfvKey(kco); // objectType:count
 
@@ -1981,19 +2005,23 @@ sai_status_t Syncd::processEntry(
     switch (api)
     {
         case SAI_COMMON_API_CREATE:
+            SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_CREATE");
             return m_vendorSai->create(metaKey, SAI_NULL_OBJECT_ID, attr_count, attr_list);
 
         case SAI_COMMON_API_REMOVE:
+            SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_REMOVE");
             return m_vendorSai->remove(metaKey);
 
         case SAI_COMMON_API_SET:
+            SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_SET");
             return m_vendorSai->set(metaKey, attr_list);
 
         case SAI_COMMON_API_GET:
+            SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_GET");
             return m_vendorSai->get(metaKey, attr_count, attr_list);
 
         default:
-
+            SWSS_LOG_NOTICE("multithreaded: api %s not supported", sai_serialize_common_api(api).c_str());
             SWSS_LOG_THROW("api %s not supported", sai_serialize_common_api(api).c_str());
     }
 }
@@ -2518,6 +2546,7 @@ void Syncd::sendApiResponse(
         _In_ sai_status_t* object_statuses)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("sendApiResponse");
 
     /*
      * By default synchronous mode is disabled and can be enabled by command
@@ -2528,6 +2557,7 @@ void Syncd::sendApiResponse(
 
     if (!m_enableSyncMode)
     {
+        SWSS_LOG_NOTICE("sendApiResponse !m_enableSyncMode");
         return;
     }
 
@@ -2542,12 +2572,18 @@ void Syncd::sendApiResponse(
             break;
 
         default:
+            SWSS_LOG_NOTICE("multithreaded: api %s not supported by this function",
+                    sai_serialize_common_api(api).c_str());
             SWSS_LOG_THROW("api %s not supported by this function",
                     sai_serialize_common_api(api).c_str());
     }
 
     if (status != SAI_STATUS_SUCCESS)
     {
+        SWSS_LOG_NOTICE("multithreaded: api %s failed in syncd mode: %s",
+                    sai_serialize_common_api(api).c_str(),
+                    sai_serialize_status(status).c_str());
+
         SWSS_LOG_ERROR("api %s failed in syncd mode: %s",
                     sai_serialize_common_api(api).c_str(),
                     sai_serialize_status(status).c_str());
@@ -2564,6 +2600,10 @@ void Syncd::sendApiResponse(
 
     std::string strStatus = sai_serialize_status(status);
 
+    SWSS_LOG_NOTICE("multithreaded: sending response for %s api with status: %s",
+            sai_serialize_common_api(api).c_str(),
+            strStatus.c_str());
+
     SWSS_LOG_INFO("sending response for %s api with status: %s",
             sai_serialize_common_api(api).c_str(),
             strStatus.c_str());
@@ -2572,6 +2612,10 @@ void Syncd::sendApiResponse(
 
     SWSS_LOG_INFO("response for %s api was send",
             sai_serialize_common_api(api).c_str());
+
+    SWSS_LOG_NOTICE("multithreaded: response for %s api was send",
+            sai_serialize_common_api(api).c_str());
+
 }
 
 void Syncd::sendApiResponseSequence(
@@ -2582,8 +2626,13 @@ void Syncd::sendApiResponseSequence(
         _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("multithreaded: sendApiResponseSequence");
+
+    //sequenceNumber = INVALID_SEQUENCE_NUMBER;
 
     if(sequenceNumber != INVALID_SEQUENCE_NUMBER) {
+        SWSS_LOG_NOTICE("multithreaded: valid sequence number %d", sequenceNumber);
+
         // If the response is to be sequenced, then add it to the sequencer
         auto lambda = [=]() {
             sendApiResponse(api, status, object_count, object_statuses);
@@ -2593,7 +2642,12 @@ void Syncd::sendApiResponseSequence(
     }
     else {
         // If the response is not to be sequenced, then send it directly
+        SWSS_LOG_NOTICE("multithreaded: invalid sequence number, api %s, status %d, object_count %d", sai_serialize_common_api(api).c_str(), status, object_count);
+        if(object_statuses == NULL) {
+            SWSS_LOG_NOTICE("multithreaded: object_statuses is NULL");
+        }
         sendApiResponse(api, status, object_count, object_statuses);
+        SWSS_LOG_NOTICE("multithreaded: sendApiResponse sent");
     }
 }
 
@@ -2951,6 +3005,7 @@ void Syncd::pushRingBuffer(AnyTask&& func)
 {
     if (!gRingBuffer || !gRingBuffer->Started) 
     {
+        SWSS_LOG_NOTICE("multithreaded: pushRingBuffer: gRingBuffer is not started");
         func();
     // } else if (!gRingBuffer->Serves(getName())) {
     //     while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle) {
@@ -2961,6 +3016,7 @@ void Syncd::pushRingBuffer(AnyTask&& func)
         while (!gRingBuffer->push(func)) {
             SWSS_LOG_WARN("fail to push..ring is full...");
         }
+        SWSS_LOG_NOTICE("multithreaded: pushRingBuffer: notify_one");
         gRingBuffer->cv.notify_one();
     }
 }
@@ -2971,6 +3027,7 @@ sai_status_t Syncd::processQuadEvent(
         _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("multithreaded: %d, api=%s, key=%s, op=%s", sequenceNumber, sai_serialize_common_api(api).c_str(), kfvKey(kco).c_str(), kfvOp(kco).c_str());
 
     const std::string& key = kfvKey(kco);
     const std::string& op = kfvOp(kco);
@@ -2985,7 +3042,7 @@ sai_status_t Syncd::processQuadEvent(
         SWSS_LOG_THROW("invalid object type %s", key.c_str());
     }
     
-    return processQuadEventTag(api, key, op, strObjectId, metaKey, kco, 0);
+    return processQuadEventTag(api, key, op, strObjectId, metaKey, kco, sequenceNumber);
 }
 
 sai_status_t Syncd::processQuadEventTag(
@@ -3031,7 +3088,9 @@ sai_status_t Syncd::processQuadEventTag(
          * TODO: must be done per switch, and switch may not exists yet
          */
 
+        SWSS_LOG_NOTICE("multithreaded: updateNotificationsPointers");
         m_handler->updateNotificationsPointers(attr_count, attr_list);
+        SWSS_LOG_NOTICE("multithreaded: finish updateNotificationsPointers");
     }
 
     if (isInitViewMode())
@@ -3039,6 +3098,8 @@ sai_status_t Syncd::processQuadEventTag(
         sai_status_t status = processQuadEventInInitViewMode(metaKey.objecttype, strObjectId, api, attr_count, attr_list);
 
         syncUpdateRedisQuadEvent(status, api, kco);
+
+        SWSS_LOG_NOTICE("multithreaded: isInitViewMode()");
 
         return status;
     }
@@ -3052,11 +3113,16 @@ sai_status_t Syncd::processQuadEventTag(
          */
 
         SWSS_LOG_DEBUG("translating VID to RIDs on all attributes");
+        SWSS_LOG_NOTICE("multithreaded: translateVidToRid");
 
         m_translator->translateVidToRid(metaKey.objecttype, attr_count, attr_list);
+
+        SWSS_LOG_NOTICE("multithreaded: success translateVidToRid");
     }
 
+    SWSS_LOG_NOTICE("multithreaded: sai_metadata_get_object_type_info ");
     auto info = sai_metadata_get_object_type_info(metaKey.objecttype);
+    SWSS_LOG_NOTICE("multithreaded: sai_metadata_get_object_type_info success");
 
     sai_status_t status;
 
@@ -3084,10 +3150,17 @@ sai_status_t Syncd::processQuadEventTag(
         status = processOid(metaKey.objecttype, strObjectId, api, attr_count, attr_list);
     }
 
+    SWSS_LOG_NOTICE("multithreaded: status %d", status);
+
     if (api == SAI_COMMON_API_GET)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
+            SWSS_LOG_NOTICE("multithreaded: get API for key: %s op: %s returned status: %s",
+                    key.c_str(),
+                    op.c_str(),
+                    sai_serialize_status(status).c_str());
+
             SWSS_LOG_INFO("get API for key: %s op: %s returned status: %s",
                     key.c_str(),
                     op.c_str(),
@@ -3097,12 +3170,13 @@ sai_status_t Syncd::processQuadEventTag(
         // extract switch VID from any object type
 
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
+        SWSS_LOG_NOTICE("multithreaded: SAI_COMMON_API_GET");
 
         sendGetResponseSequence(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list, sequenceNumber);
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
-        sendApiResponseSequence(api, status, sequenceNumber=sequenceNumber);
+        sendApiResponseSequence(api, status, 0, NULL, sequenceNumber=sequenceNumber);
 
         if (info->isobjectid && api == SAI_COMMON_API_SET)
         {
@@ -3131,7 +3205,7 @@ sai_status_t Syncd::processQuadEventTag(
     }
     else // non GET api, status is SUCCESS
     {
-        sendApiResponseSequence(api, status, sequenceNumber=sequenceNumber);
+        sendApiResponseSequence(api, status, 0, NULL, sequenceNumber=sequenceNumber);
     }
 
     syncUpdateRedisQuadEvent(status, api, kco);
@@ -3168,12 +3242,15 @@ sai_status_t Syncd::processOid(
         SWSS_LOG_THROW("passing non object id %s as generic object", info->objecttypename);
     }
 
+    SWSS_LOG_NOTICE("multithreaded: processOid %d", api);
+
     switch (api)
     {
         case SAI_COMMON_API_CREATE:
             return processOidCreate(objectType, strObjectId, attr_count, attr_list);
 
         case SAI_COMMON_API_REMOVE:
+            SWSS_LOG_NOTICE("multithreaded: processOid processOidRemove");
             return processOidRemove(objectType, strObjectId);
 
         case SAI_COMMON_API_SET:
@@ -3183,7 +3260,7 @@ sai_status_t Syncd::processOid(
             return processOidGet(objectType, strObjectId, attr_count, attr_list);
 
         default:
-
+            SWSS_LOG_NOTICE("multithreaded: common api (%s) is not implemented", sai_serialize_common_api(api).c_str());
             SWSS_LOG_THROW("common api (%s) is not implemented", sai_serialize_common_api(api).c_str());
     }
 }
@@ -3195,6 +3272,7 @@ sai_status_t Syncd::processOidCreate(
         _In_ sai_attribute_t *attr_list)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("multithreaded: processOidCreate");
 
     sai_object_id_t objectVid;
     sai_deserialize_object_id(strObjectId, objectVid);
@@ -3232,6 +3310,8 @@ sai_status_t Syncd::processOidCreate(
          * virtual id's to redis db.
          */
 
+        SWSS_LOG_NOTICE("multithreaded: m_vendorSai->create success");
+
         m_translator->insertRidAndVid(objectRid, objectVid);
 
         SWSS_LOG_INFO("saved VID %s to RID %s",
@@ -3245,11 +3325,13 @@ sai_status_t Syncd::processOidCreate(
              * constructor, like getting all queues, ports, etc.
              */
 
-            m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, objectRid, m_client, m_translator, m_vendorSai);
+            SWSS_LOG_NOTICE("multithreaded: object type switch");
 
-            m_mdioIpcServer->setSwitchId(objectRid);
+            // m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, objectRid, m_client, m_translator, m_vendorSai);
 
-            startDiagShell(objectRid);
+            // m_mdioIpcServer->setSwitchId(objectRid);
+
+            // startDiagShell(objectRid);
         }
 
         if (objectType == SAI_OBJECT_TYPE_PORT)
@@ -3258,6 +3340,7 @@ sai_status_t Syncd::processOidCreate(
         }
     }
 
+    SWSS_LOG_NOTICE("multithreaded: processOidCreate status %d", status);
     return status;
 }
 
@@ -3265,6 +3348,7 @@ sai_status_t Syncd::processOidRemove(
         _In_ sai_object_type_t objectType,
         _In_ const std::string &strObjectId)
 {
+    SWSS_LOG_NOTICE("multithreaded: processOidRemove");
     SWSS_LOG_ENTER();
 
     sai_object_id_t objectVid;
@@ -3277,6 +3361,8 @@ sai_status_t Syncd::processOidRemove(
         sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
 
         m_switches.at(switchVid)->collectPortRelatedObjects(rid);
+
+        SWSS_LOG_NOTICE("multithreaded: processOidRemove SAI_OBJECT_TYPE_PORT");
     }
 
     sai_status_t status = m_vendorSai->remove(objectType, rid);
@@ -3325,20 +3411,26 @@ sai_status_t Syncd::processOidRemove(
              * can already deduce that.
              */
 
-            sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
+            SWSS_LOG_NOTICE("multithreaded: processOidRemove start removing...");
 
-            if (m_switches.at(switchVid)->isDiscoveredRid(rid))
-            {
-                m_switches.at(switchVid)->removeExistingObjectReference(rid);
-            }
+            //sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
 
-            if (objectType == SAI_OBJECT_TYPE_PORT)
-            {
-                m_switches.at(switchVid)->postPortRemove(rid);
-            }
+            // ???
+            // if (m_switches.at(switchVid)->isDiscoveredRid(rid))
+            // {
+            //     m_switches.at(switchVid)->removeExistingObjectReference(rid);
+            // }
+
+            // if (objectType == SAI_OBJECT_TYPE_PORT)
+            // {
+            //     m_switches.at(switchVid)->postPortRemove(rid);
+            // }
+
+            SWSS_LOG_NOTICE("multithreaded: processOidRemove finish removing");
         }
     }
 
+    SWSS_LOG_NOTICE("multithreaded: processOidRemove status %d", status);
     return status;
 }
 
@@ -3587,6 +3679,9 @@ void Syncd::sendGetResponseSequence(
         _In_ sai_attribute_t *attr_list,
         _In_ int sequenceNumber) {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("multithreaded: sendGetResponseSequence");
+
+    //sequenceNumber = INVALID_SEQUENCE_NUMBER;
 
     if(sequenceNumber != INVALID_SEQUENCE_NUMBER) {
         auto lambda = [=]() {
@@ -4468,10 +4563,10 @@ void Syncd::onSyncdStart(
 
     m_switches = hr.hardReinit();
 
-    for (auto& sw: m_switches)
-    {
-        startDiagShell(sw.second->getRid());
-    }
+    // for (auto& sw: m_switches)
+    // {
+    //     startDiagShell(sw.second->getRid());
+    // }
 
     SWSS_LOG_NOTICE("hard reinit succeeded");
 }
@@ -4570,7 +4665,7 @@ void Syncd::onSwitchCreateInInitViewMode(
 
         m_mdioIpcServer->setSwitchId(switchRid);
 
-        startDiagShell(switchRid);
+        //startDiagShell(switchRid);
     }
     else
     {
@@ -4752,7 +4847,7 @@ void Syncd::performWarmRestartSingleSwitch(
 
     auto sw = m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, switchRid, m_client, m_translator, m_vendorSai, true);
 
-    startDiagShell(switchRid);
+    //startDiagShell(switchRid);
 }
 
 void Syncd::performWarmRestart()
@@ -5222,13 +5317,14 @@ void Syncd::run()
         SWSS_LOG_NOTICE("starting main loop, ONLY restart query");
 
         if (m_commandLineOptions->m_disableExitSleep)
-            runMainLoop = false;
+            runMainLoop = true;
     }
 
     m_timerWatchdog.setCallback(timerWatchdogCallback);
 
     while (runMainLoop)
     {
+        SWSS_LOG_NOTICE("! run main loop ");
         try
         {
             swss::Selectable *sel = NULL;

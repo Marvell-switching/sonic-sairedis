@@ -1080,6 +1080,7 @@ void Proxy::updateAttributteNotificationPointers(
 {
     SWSS_LOG_ENTER();
 
+    SWSS_LOG_NOTICE("sai_metadata_update_attribute_notification_pointers from Proxy::updateAttributteNotificationPointers");
     sai_metadata_update_attribute_notification_pointers(&m_sn, count, attr_list);
 }
 
