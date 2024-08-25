@@ -33,7 +33,7 @@
 
 namespace syncd
 {
-        #define ORCH_RING_SIZE 30
+        #define ORCH_RING_SIZE 1024
         #define SLEEP_MSECONDS 500
         using AnyTask = std::function<void()>;
         template<typename DataType, int RingSize>

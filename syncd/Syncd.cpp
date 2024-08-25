@@ -366,32 +366,25 @@ void Syncd::processEvent(
          */
 
         consumer.pop(kco, isInitViewMode());
-        auto& key = kfvKey(kco);
-        auto& op = kfvOp(kco);
         /*
         * TODO 
         * 
         */
+
+    //    LogToModuleFile("1", std::get<0>(kco));
+    //    LogToModuleFile("1", std::get<1>(kco));
     //    int i = gdb_mode;
-       if(op == REDIS_ASIC_STATE_COMMAND_CREATE){
+       if( gdb_mode < 1000){
             gdb_mode++;
           processSingleEvent(kco);
        }
        else{
+        
            auto lambda = [=](){
                processSingleEvent(kco);
            };
            pushRingBuffer(lambda);
-       }
-    //     // processSingleEvent(kco);
-    //    auto lambda = [=](){
-    //     //    point(kco);
-    //         processSingleEvent(kco);
-    //      };
-    //     pushRingBuffer(lambda);
-    //     // processSingleEvent(kco);
-
-        
+       }     
     }
     while (!consumer.empty());
 }
