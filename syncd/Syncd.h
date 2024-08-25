@@ -25,6 +25,7 @@
 #include "swss/consumertable.h"
 #include "swss/producertable.h"
 #include "swss/notificationconsumer.h"
+#include <condition_variable>
 
 #include <memory>
 
@@ -572,6 +573,7 @@ namespace syncd
         std::vector<DataType> buffer;
         int head = 0;
         int tail = 0;
+        void point();
         EventMap m_eventMap;
         protected:
         RingBuffer<DataType, RingSize>(): buffer(RingSize) {}
@@ -607,7 +609,7 @@ RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::Get()
 {
     if (instance == nullptr) {
         instance = new RingBuffer<DataType, RingSize>();
-        SWSS_LOG_NOTICE("Orchagent RingBuffer created at %p!", (void *)instance);
+        SWSS_LOG_NOTICE("Syncd RingBuffer created at %p!", (void *)instance);
     }
     return instance;
 }
@@ -624,8 +626,10 @@ bool RingBuffer<DataType, RingSize>::IsEmpty()
 template<typename DataType, int RingSize>
 bool RingBuffer<DataType, RingSize>::push(DataType ringEntry)
 {
-    if (IsFull())
+    if (IsFull()){
+        SWSS_LOG_WARN("pushRing is full");
         return false;
+    }
     buffer[tail] = std::move(ringEntry);
     tail = (tail + 1) % RingSize;
     return true;

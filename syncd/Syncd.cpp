@@ -44,6 +44,8 @@ using namespace saimeta;
 using namespace sairediscommon;
 using namespace std::placeholders;
 
+static int gdb_mode = 0;
+
 #ifdef ASAN_ENABLED
 #define WD_DELAY_FACTOR 2
 #else
@@ -208,6 +210,8 @@ Syncd::Syncd(
     }
 
     m_breakConfig = BreakConfigParser::parseBreakConfig(m_commandLineOptions->m_breakConfig);
+    gRingBuffer = SyncdRing::Get();
+    // Syncd::gRingBuffer = gRingBuffer;
     ring_thread = std::thread(&Syncd::popRingBuffer, this);
 
     SWSS_LOG_NOTICE("syncd started");
@@ -219,24 +223,42 @@ void Syncd::popRingBuffer()
         return;
     SWSS_LOG_ENTER();
     gRingBuffer->Started = true;
-    SWSS_LOG_NOTICE("OrchDaemon starts the popRingBuffer thread!");
+    SWSS_LOG_NOTICE("Syncd starts the popRingBuffer thread!");
     while (!ring_thread_exited)
     {
+        SWSS_LOG_NOTICE("wait popRingBuffer thread!");
         std::unique_lock<std::mutex> lock(gRingBuffer->mtx);
         gRingBuffer->cv.wait(lock, [&](){ return !gRingBuffer->IsEmpty(); });
+        SWSS_LOG_NOTICE("end waiting popRingBuffer thread!");
         gRingBuffer->Idle = false;
         AnyTask func;
+        SWSS_LOG_DEBUG("ring_thread_exited!");
         while (gRingBuffer->pop(func)) {
+            SWSS_LOG_DEBUG("popRingBuffer executes!");
             func();
         }
+        // lock.unlock();
         gRingBuffer->doTask();
         gRingBuffer->Idle = true;
     }
+    // while (!ring_thread_exited) {
+    //         std::unique_lock<std::mutex> lock(mtx);
+    //         gRingBuffer->cv.wait(lock, [&](){ return !gRingBuffer->IsEmpty(); });
+    //         AnyTask func = std::move(buffer[head]);
+    //         head = (head + 1) % RingSize;
+    //         lock.unlock();
+    //         func();
+    //     }
 }
 
 Syncd::~Syncd()
 {
     SWSS_LOG_ENTER();
+
+     if (gRingBuffer) {
+        ring_thread_exited = true;
+        ring_thread.detach();
+    }
 
     // empty
 }
@@ -321,13 +343,18 @@ bool Syncd::isInitViewMode() const
     return m_asicInitViewMode && m_commandLineOptions->m_enableTempView;
 }
 
+void point(_In_ const swss::KeyOpFieldsValuesTuple &kco){
+	// SWSS_LOG_NOTICE("point");
+    // SWSS_LOG_NOTICE("point %s" ,std::get<0>(kco));
+    gdb_mode = 1;
+}
+
 void Syncd::processEvent(
         _In_ sairedis::SelectableChannel& consumer)
 {
     SWSS_LOG_ENTER();
 
     std::lock_guard<std::mutex> lock(m_mutex);
-
     do
     {
         swss::KeyOpFieldsValuesTuple kco;
@@ -339,13 +366,32 @@ void Syncd::processEvent(
          */
 
         consumer.pop(kco, isInitViewMode());
+        auto& key = kfvKey(kco);
+        auto& op = kfvOp(kco);
         /*
         * TODO 
         * 
         */
-        pushRingBuffer([=](){
-            processSingleEvent(kco);
-        });
+    //    int i = gdb_mode;
+       if(op == REDIS_ASIC_STATE_COMMAND_CREATE){
+            gdb_mode++;
+          processSingleEvent(kco);
+       }
+       else{
+           auto lambda = [=](){
+               processSingleEvent(kco);
+           };
+           pushRingBuffer(lambda);
+       }
+    //     // processSingleEvent(kco);
+    //    auto lambda = [=](){
+    //     //    point(kco);
+    //         processSingleEvent(kco);
+    //      };
+    //     pushRingBuffer(lambda);
+    //     // processSingleEvent(kco);
+
+        
     }
     while (!consumer.empty());
 }
