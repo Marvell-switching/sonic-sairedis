@@ -136,7 +136,8 @@ namespace syncd
                     _In_ const swss::KeyOpFieldsValuesTuple &kco);
 
             sai_status_t processSingleEvent(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequence_number=INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processAttrCapabilityQuery(
                     _In_ const swss::KeyOpFieldsValuesTuple &kco);
