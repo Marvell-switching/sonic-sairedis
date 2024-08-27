@@ -1,5 +1,6 @@
 #include "Sequencer.h"
 #include "swss/logger.h"
+#include "Logger.h"
 
 using namespace syncd;
 // Macro for easy logging

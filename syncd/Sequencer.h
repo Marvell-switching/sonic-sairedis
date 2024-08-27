@@ -13,13 +13,8 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <cstdio>
+#include "Logger.h"
 
-#define MODULE_NAME     "multithreadedsyncd"
-
-#define MAX_LOG_SIZE    (3000 * 1024) /* 3000 KB */
-
-// Improved logging function with thread safety
-void writeToLogFile(const std::string& funcName, const std::string& fileNum, const std::string& message);
 
 namespace syncd {
 

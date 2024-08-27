@@ -11,6 +11,7 @@
 
 #include <unistd.h>
 #include <inttypes.h>
+#include "Logger.h"
 
 using namespace syncd;
 using namespace saimeta;
