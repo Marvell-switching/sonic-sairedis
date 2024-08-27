@@ -8,6 +8,19 @@
 #include <chrono>
 #include <limits>
 
+
+#include <string>
+#include <fstream>
+#include <sys/stat.h>
+#include <cstdio>
+
+#define MODULE_NAME     "multithreadedsyncd"
+
+#define MAX_LOG_SIZE    (3000 * 1024) /* 3000 KB */
+
+// Improved logging function with thread safety
+void writeToLogFile(const std::string& funcName, const std::string& fileNum, const std::string& message);
+
 namespace syncd {
 
     #define MAX_SEQUENCE_NUMBER 1000000
@@ -44,6 +57,7 @@ namespace syncd {
         std::map<int, std::function<void()>> responses;  // Stores responses by sequence number
         std::chrono::steady_clock::time_point last_update_time;  // Time of the last sequence update
     };
+    
 }
 
 
