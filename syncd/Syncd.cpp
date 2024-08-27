@@ -418,11 +418,12 @@ void point(_In_ const swss::KeyOpFieldsValuesTuple &kco){
 }
 
 void Syncd::processEvent(
-        _In_ sairedis::SelectableChannel& consumer)
+        _In_ sairedis::SelectableChannel& consumer,
+        _In_ int sequence_number)
 {
     SWSS_LOG_ENTER();
     static int entries = 0;
-    int sequencer_number;
+    //int sequencer_number;
     //SWSS_LOG_NOTICE("multithreaded: !!!processEvent, ITERATION: %d!!!", entries++);
     std::string logMessage = "multithreaded: !!!processEvent, ITERATION: " + std::to_string(entries++) + "!!!";
     LogToModuleFile("1", logMessage.c_str());
@@ -431,6 +432,9 @@ void Syncd::processEvent(
     do
     {
         swss::KeyOpFieldsValuesTuple kco;
+        consumer.pop(kco, isInitViewMode());
+        processSingleEvent(kco, sequence_number);
+
 
         /*
          * In init mode we put all data to TEMP view and we snoop.  We need
@@ -438,56 +442,23 @@ void Syncd::processEvent(
          * data to redis db.
          */
 
-        consumer.pop(kco, isInitViewMode());
-        sequencer_number = m_sequencer->allocateSequenceNumber();
-        auto& key = kfvKey(kco);
-        auto& op = kfvOp(kco);
+        // sequencer_number = m_sequencer->allocateSequenceNumber();
+        // auto& key = kfvKey(kco);
+        // auto& op = kfvOp(kco);
 
-        //SWSS_LOG_NOTICE("multithreaded: BEFORE PUSH INTO RING BUFFER, key: %s op: %s, sequence number: %d", key.c_str(), op.c_str(), sequencer_number);
-        logMessage = "multithreaded: BEFORE PUSH INTO RING BUFFER, key: " + key + " op: " + op + ", sequence number: " + std::to_string(sequencer_number);
-        LogToModuleFile("1", logMessage.c_str());
+        // //SWSS_LOG_NOTICE("multithreaded: BEFORE PUSH INTO RING BUFFER, key: %s op: %s, sequence number: %d", key.c_str(), op.c_str(), sequencer_number);
+        // logMessage = "multithreaded: BEFORE PUSH INTO RING BUFFER, key: " + key + " op: " + op + ", sequence number: " + std::to_string(sequencer_number);
+        // LogToModuleFile("1", logMessage.c_str());
 
-        auto lambda = [=](){
-            //SWSS_LOG_NOTICE("multithreaded: inside lambda, start processing event");
-            LogToModuleFile("1", "multithreaded: inside lambda, start processing event");
-            processSingleEvent(kco, sequencer_number);
-            //SWSS_LOG_NOTICE("multithreaded: inside lambda, end processing event");
-            LogToModuleFile("1", "multithreaded: inside lambda, end processing event");
-        };
+        // auto lambda = [=](){
+        //     //SWSS_LOG_NOTICE("multithreaded: inside lambda, start processing event");
+        //     LogToModuleFile("1", "multithreaded: inside lambda, start processing event");
+        //     processSingleEvent(kco, sequencer_number);
+        //     //SWSS_LOG_NOTICE("multithreaded: inside lambda, end processing event");
+        //     LogToModuleFile("1", "multithreaded: inside lambda, end processing event");
+        // };
         
-        pushRingBuffer(lambda);
-
-        //auto& key = kfvKey(kco);
-        //auto& op = kfvOp(kco);
-        /*
-        * TODO 
-        * 
-        */
-
-    //    LogToModuleFile("1", std::get<0>(kco));
-    //    LogToModuleFile("1", std::get<1>(kco));
-    //    int i = gdb_mode;
-    //    if(op == REDIS_ASIC_STATE_COMMAND_CREATE){
-    //         gdb_mode++;
-    //       processSingleEvent(kco);
-    //    }
-    //    else{
-    //        auto lambda = [=](){
-    //            SWSS_LOG_DEBUG("multithreaded: start processing event");
-    //            processSingleEvent(kco);
-    //            SWSS_LOG_DEBUG("multithreaded: end processing event");
-    //        };
-    //        pushRingBuffer(lambda);
-    //    }
-    //     // processSingleEvent(kco);
-    //    auto lambda = [=](){
-    //     //    point(kco);
-    //         processSingleEvent(kco);
-    //      };
-    //     pushRingBuffer(lambda);
-    //     // processSingleEvent(kco);
-
-        
+        // pushRingBuffer(lambda);
     }
     while (!consumer.empty());
 }
@@ -5449,13 +5420,19 @@ void Syncd::run()
 
     while (runMainLoop)
     {
+        // add sequence number to log messages
         SWSS_LOG_NOTICE("! run main loop ");
         try
         {
             swss::Selectable *sel = NULL;
 
             int result = s->select(&sel);
+            int sequence_number = m_sequencer->allocateSequenceNumber();
 
+            std::string logMessage = "multithreaded: BEFORE PUSH INTO RING BUFFER sequence number: " + std::to_string(sequence_number);
+            LogToModuleFile("1", logMessage.c_str());
+
+            //restart query sequencer
             if (sel == m_restartQuery.get())
             {
                 /*
@@ -5470,7 +5447,7 @@ void Syncd::run()
 
                 while (!m_selectableChannel->empty())
                 {
-                    processEvent(*m_selectableChannel.get());
+                    processEvent(*m_selectableChannel.get(), sequence_number);
                 }
 
                 SWSS_LOG_NOTICE("drained queue");
@@ -5514,7 +5491,7 @@ void Syncd::run()
                     if (status != SAI_STATUS_SUCCESS)
                     {
                         SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_FAST_API_ENABLE=true: %s for express pre-shutdown. Fall back to cold restart",
-				       sai_serialize_status(status).c_str());
+                    sai_serialize_status(status).c_str());
 
                         shutdownType = SYNCD_RESTART_TYPE_COLD;
 
@@ -5549,18 +5526,43 @@ void Syncd::run()
             }
             else if (sel == m_flexCounter.get())
             {
-                processFlexCounterEvent(*(swss::ConsumerTable*)sel);
+                //directly to sequencer
+                auto lambda = [=](){
+                    LogToModuleFile("1", "multithreaded: inside lambda, start m_flexCounter");
+                    processFlexCounterEvent(*(swss::ConsumerTable*)sel);
+                    LogToModuleFile("1", "multithreaded: inside lambda, end m_flexCounter");
+                };
+                m_sequencer->executeFuncInSequence(sequence_number, lambda);
+
+                //processFlexCounterEvent(*(swss::ConsumerTable*)sel);
             }
             else if (sel == m_flexCounterGroup.get())
             {
-                processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
+                //directly to sequencer
+                auto lambda = [=](){
+                    LogToModuleFile("1", "multithreaded: inside lambda, start m_flexCounterGroup");
+                    processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
+                    LogToModuleFile("1", "multithreaded: inside lambda, end m_flexCounterGroup");
+                };
+                m_sequencer->executeFuncInSequence(sequence_number, lambda);
+                
+                //processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
             }
             else if (sel == m_selectableChannel.get())
             {
-                processEvent(*m_selectableChannel.get());
+                auto lambda = [=](){
+                    LogToModuleFile("1", "multithreaded: inside lambda, start processing event");
+                    processEvent(*m_selectableChannel.get(), sequence_number);
+                    LogToModuleFile("1", "multithreaded: inside lambda, end processing event");
+                };
+        
+                pushRingBuffer(lambda);
+
+                // processEvent(*m_selectableChannel.get());
             }
             else
             {
+                
                 SWSS_LOG_ERROR("select failed: %d", result);
             }
         }
