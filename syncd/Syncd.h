@@ -76,7 +76,8 @@ namespace syncd
         public: // TODO private
 
             void processEvent(
-                    _In_ sairedis::SelectableChannel& consumer);
+                    _In_ sairedis::SelectableChannel& consumer,
+                    _In_ int sequence_number = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processQuadEventInInitViewMode(
                     _In_ sai_object_type_t objectType,
