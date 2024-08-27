@@ -16,7 +16,7 @@
 
 #define MODULE_NAME     "multithreadedsyncd"
 
-#define MAX_LOG_SIZE    (500 * 1024) /* 500 KB */
+#define MAX_LOG_SIZE    (3000 * 1024) /* 3000 KB */
 
 // Improved logging function with thread safety
 void writeToLogFile(const std::string& funcName, const std::string& fileNum, const std::string& message);

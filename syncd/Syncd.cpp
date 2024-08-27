@@ -3506,18 +3506,29 @@ sai_status_t Syncd::processOidRemove(
 
             //SWSS_LOG_NOTICE("multithreaded: processOidRemove start removing...");
 
-            //sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
+            sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
 
-            // ???
+            // TODO: NEEDS TO BE FIXED!
+            std::string logMessage = "multithreaded: SKIP processOidRemove start removing... switchVid: " + std::to_string(switchVid); 
+            LogToModuleFile("1", logMessage);
+            // LogToModuleFile("1", "multithreaded: processOidRemove start removing...");
             // if (m_switches.at(switchVid)->isDiscoveredRid(rid))
             // {
+            //     LogToModuleFile("1", "multithreaded: try removeExistingObjectReference");
             //     m_switches.at(switchVid)->removeExistingObjectReference(rid);
+            //     LogToModuleFile("1", "multithreaded: success removeExistingObjectReference");
             // }
+
+            // LogToModuleFile("1", "multithreaded: processOidRemove removed isDiscoveredRid");
 
             // if (objectType == SAI_OBJECT_TYPE_PORT)
             // {
+            //     LogToModuleFile("1", "multithreaded: try postPortRemove");
             //     m_switches.at(switchVid)->postPortRemove(rid);
+            //     LogToModuleFile("1", "multithreaded: success postPortRemove");
             // }
+
+            // LogToModuleFile("1", "multithreaded: processOidRemove removed postPortRemove");
 
             //SWSS_LOG_NOTICE("multithreaded: processOidRemove finish removing");
         }
@@ -5417,6 +5428,9 @@ void Syncd::run()
     }
     catch(const std::exception &e)
     {
+        std::string LogToModuleFile = "shutdown - Runtime error during syncd init: " + std::string(e.what());
+        LogToModuleFile("1", LogToModuleFile);
+
         SWSS_LOG_ERROR("Runtime error during syncd init: %s", e.what());
 
         sendShutdownRequestAfterException();
@@ -5553,6 +5567,8 @@ void Syncd::run()
         catch(const std::exception &e)
         {
             SWSS_LOG_ERROR("Runtime error: %s", e.what());
+            std::string LogToModuleFile = "Runtime error: " + std::string(e.what());
+            LogToModuleFile("1", LogToModuleFile);
 
             sendShutdownRequestAfterException();
 
