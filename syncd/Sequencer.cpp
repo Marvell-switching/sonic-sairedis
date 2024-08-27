@@ -63,6 +63,11 @@ void Sequencer::executeReadyResponses() {
         ++next_seq_to_send; // Increment the sequence number
         std::string logMsg = "multithreaded: Next sequence found! Executed lambda with seq: " + std::to_string(next_seq_to_send);
         LogToModuleFile("1", logMsg);
+
+        if (current_seq >= MAX_SEQUENCE_NUMBER) {
+            LogToModuleFile("1", "multithreaded: Resetting next sequence number to send needs to be reset to avoid overflow");
+            next_seq_to_send = 0;
+        }
     }
 }
 
@@ -76,9 +81,8 @@ int Sequencer::allocateSequenceNumber() {
     LogToModuleFile("1", logMsg);
 
     if (current_seq >= MAX_SEQUENCE_NUMBER) {
-        LogToModuleFile("1", "multithreaded: Resetting sequence number to avoid overflow");
+        LogToModuleFile("1", "multithreaded: Resetting allocated sequence number to avoid overflow");
         current_seq = 0;
-        next_seq_to_send = 0;
     }
 
     return seq;
@@ -96,6 +100,11 @@ void Sequencer::executeFuncInSequence(int seq, std::function<void()> response_la
         response_lambda();
         // Increment the next sequence to send
         ++next_seq_to_send;
+
+        if (current_seq >= MAX_SEQUENCE_NUMBER) {
+            LogToModuleFile("1", "multithreaded: Resetting next sequence number to send needs to be reset to avoid overflow");
+            next_seq_to_send = 0;
+        }
         // Continue sending any subsequent responses that are ready
         executeReadyResponses();
     } else {
