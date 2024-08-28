@@ -381,6 +381,7 @@ void Syncd::processEvent(
          * data to redis db.
          */
 
+#if our_previous_attack_helicopter
         // sequencer_number = m_sequencer->allocateSequenceNumber();
         // auto& key = kfvKey(kco);
         // auto& op = kfvOp(kco);
@@ -396,8 +397,9 @@ void Syncd::processEvent(
         //     //SWSS_LOG_NOTICE("multithreaded: inside lambda, end processing event");
         //     LogToModuleFile("1", "multithreaded: inside lambda, end processing event");
         // };
-        
+
         // pushRingBuffer(lambda);
+#endif        
     }
     while (!consumer.empty());
 }
@@ -3330,9 +3332,9 @@ sai_status_t Syncd::processOidCreate(
 
             //SWSS_LOG_NOTICE("multithreaded: object type switch");
 
-            //m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, objectRid, m_client, m_translator, m_vendorSai);
+            m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, objectRid, m_client, m_translator, m_vendorSai);
 
-            //m_mdioIpcServer->setSwitchId(objectRid);
+            m_mdioIpcServer->setSwitchId(objectRid);
 
             // startDiagShell(objectRid);
         }
@@ -3414,33 +3416,28 @@ sai_status_t Syncd::processOidRemove(
              * can already deduce that.
              */
 
-            //SWSS_LOG_NOTICE("multithreaded: processOidRemove start removing...");
-
             sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
 
-            // TODO: NEEDS TO BE FIXED!
-            std::string logMessage = "multithreaded: SKIP processOidRemove start removing... switchVid: " + std::to_string(switchVid); 
-            LogToModuleFile("1", logMessage);
-            // LogToModuleFile("1", "multithreaded: processOidRemove start removing...");
-            // if (m_switches.at(switchVid)->isDiscoveredRid(rid))
-            // {
-            //     LogToModuleFile("1", "multithreaded: try removeExistingObjectReference");
-            //     m_switches.at(switchVid)->removeExistingObjectReference(rid);
-            //     LogToModuleFile("1", "multithreaded: success removeExistingObjectReference");
-            // }
+            LogToModuleFile("1", "multithreaded: processOidRemove start removing...");
+            if (m_switches.at(switchVid)->isDiscoveredRid(rid))
+            {
+                LogToModuleFile("1", "multithreaded: try removeExistingObjectReference");
+                m_switches.at(switchVid)->removeExistingObjectReference(rid);
+                LogToModuleFile("1", "multithreaded: success removeExistingObjectReference");
+            }
 
-            // LogToModuleFile("1", "multithreaded: processOidRemove removed isDiscoveredRid");
+            LogToModuleFile("1", "multithreaded: processOidRemove removed isDiscoveredRid");
 
-            // if (objectType == SAI_OBJECT_TYPE_PORT)
-            // {
-            //     LogToModuleFile("1", "multithreaded: try postPortRemove");
-            //     m_switches.at(switchVid)->postPortRemove(rid);
-            //     LogToModuleFile("1", "multithreaded: success postPortRemove");
-            // }
+            if (objectType == SAI_OBJECT_TYPE_PORT)
+            {
+                LogToModuleFile("1", "multithreaded: try postPortRemove");
+                m_switches.at(switchVid)->postPortRemove(rid);
+                LogToModuleFile("1", "multithreaded: success postPortRemove");
+            }
 
-            // LogToModuleFile("1", "multithreaded: processOidRemove removed postPortRemove");
+            LogToModuleFile("1", "multithreaded: processOidRemove removed postPortRemove");
 
-            //SWSS_LOG_NOTICE("multithreaded: processOidRemove finish removing");
+            SWSS_LOG_NOTICE("multithreaded: processOidRemove finish removing");
         }
     }
 
@@ -4693,9 +4690,9 @@ void Syncd::onSwitchCreateInInitViewMode(
 
         // make switch initialization and get all default data
 
-        // m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, switchRid, m_client, m_translator, m_vendorSai);
+        m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, switchRid, m_client, m_translator, m_vendorSai);
 
-        // m_mdioIpcServer->setSwitchId(switchRid);
+        m_mdioIpcServer->setSwitchId(switchRid);
 
         //startDiagShell(switchRid);
     }
@@ -4877,7 +4874,7 @@ void Syncd::performWarmRestartSingleSwitch(
 
     // perform all get operations on existing switch
 
-    // auto sw = m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, switchRid, m_client, m_translator, m_vendorSai, true);
+    auto sw = m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, switchRid, m_client, m_translator, m_vendorSai, true);
 
     //startDiagShell(switchRid);
 }
@@ -5338,8 +5335,8 @@ void Syncd::run()
     }
     catch(const std::exception &e)
     {
-        std::string LogToModuleFile = "shutdown - Runtime error during syncd init: " + std::string(e.what());
-        LogToModuleFile("1", LogToModuleFile);
+        std::string logText = "shutdown - Runtime error during syncd init: " + std::string(e.what());
+        LogToModuleFile("1", logText);
 
         SWSS_LOG_ERROR("Runtime error during syncd init: %s", e.what());
 
