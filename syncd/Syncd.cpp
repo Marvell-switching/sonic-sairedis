@@ -35,7 +35,7 @@
 
 #include <iterator>
 #include <algorithm>
-//#include "Logger.h"
+#include "Logger.h"
 
 #define DEF_SAI_WARM_BOOT_DATA_FILE "/var/warmboot/sai-warmboot.bin"
 #define SAI_FAILURE_DUMP_SCRIPT "/usr/bin/sai_failure_dump.sh"
@@ -52,9 +52,6 @@ static int gdb_mode = 0;
 #else
 #define WD_DELAY_FACTOR 1
 #endif
-
-// Macro for easy logging
-#define LogToModuleFile(fileNum, msg) writeToLogFile(__func__, fileNum, msg)
 
 Syncd::Syncd(
         _In_ std::shared_ptr<sairedis::SaiInterface> vendorSai,

@@ -1,50 +1,5 @@
 #include "Sequencer.h"
-//#include "swss/logger.h"
-//#include "Logger.h"
-
-#define LogToModuleFile(fileNum, msg) writeToLogFile(__func__, fileNum, msg)
-
-// Define a mutex for thread safety
-static std::mutex logMutex;
-
-void writeToLogFile(const std::string& funcName, const std::string& fileNum, const std::string& message) {
-    // Lock the mutex to ensure thread safety
-    std::lock_guard<std::mutex> lock(logMutex);
-
-    std::string filePath = "/" + std::string(MODULE_NAME) + "_debugLog_" + fileNum + ".txt";
-    std::string backupFilePath = filePath + ".history";
-    struct stat fileStat;
-
-    // Check if the log file exists and if its size exceeds the maximum limit
-    if (stat(filePath.c_str(), &fileStat) == 0) {
-        if (fileStat.st_size > MAX_LOG_SIZE) {
-            // Remove the old backup file
-            std::remove(backupFilePath.c_str());
-            // Rename the current log file to the backup file
-            if (std::rename(filePath.c_str(), backupFilePath.c_str()) != 0) {
-                std::cerr << "Error: Could not rename file " << filePath << " to " << backupFilePath << std::endl;
-                return;
-            }
-        }
-    }
-
-    // Open the log file in append mode
-    std::ofstream logFile(filePath, std::ios_base::app);
-    if (!logFile.is_open()) {
-        std::cerr << "Error: Could not open file " << filePath << std::endl;
-        return;
-    }
-
-    // Get the current time in microseconds since the epoch
-    auto now = std::chrono::system_clock::now();
-    auto now_ms = std::chrono::time_point_cast<std::chrono::microseconds>(now);
-    auto epoch = now_ms.time_since_epoch();
-    long long microseconds = std::chrono::duration_cast<std::chrono::microseconds>(epoch).count();
-
-    // Write the timestamp, function name, and message to the log file
-    logFile << microseconds << " " << funcName << ": " << message << std::endl;
-    logFile.close();
-}
+#include "swss/logger.h"
 
 using namespace syncd;
 
