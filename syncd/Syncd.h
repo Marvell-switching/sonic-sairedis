@@ -25,20 +25,32 @@
 #include "swss/consumertable.h"
 #include "swss/producertable.h"
 #include "swss/notificationconsumer.h"
-#include <condition_variable>
 
-#include <memory>
 
+#include "SyncdMultipleRingBuff.h"
 #include "Sequencer.h"
+#include <condition_variable>
+#include <memory>
+#include <set>
+#include <map>
+#include "sairediscommon.h"
+
+#include <set>
+#include <string>
+#include <vector>
 
 namespace syncd
 {
-        #define ORCH_RING_SIZE 1024
-        #define SLEEP_MSECONDS 500
-        using AnyTask = std::function<void()>;
-        template<typename DataType, int RingSize>
-        class RingBuffer;
-        typedef RingBuffer<AnyTask, ORCH_RING_SIZE> SyncdRing;
+    #define ORCH_RING_SIZE 1024
+    #define SLEEP_MSECONDS 500
+    using AnyTask = std::function<void()>;
+
+    
+    typedef syncdMultipleRingBuff::RingBuffer<AnyTask, ORCH_RING_SIZE> SyncdRing;
+    struct OperationGroup {
+            std::set<std::string> operations;
+            SyncdRing* ringBuffer;
+    };        
  
     class Syncd
     {
@@ -46,7 +58,6 @@ namespace syncd
 
             Syncd(const Syncd&) = delete;
             Syncd& operator=(const Syncd&) = delete;
-            std::thread ring_thread;
 
         public:
 
@@ -58,6 +69,11 @@ namespace syncd
             virtual ~Syncd();
 
         public:
+            
+            struct SaiObjectType {
+                sai_object_type_t enumValue;
+                std::string enumString;
+            };
 
             bool getAsicInitViewMode() const;
 
@@ -75,18 +91,17 @@ namespace syncd
 
         public: // TODO private
 
-            int getSeqNumber();
-
             void processEvent(
-                    _In_ sairedis::SelectableChannel& consumer,
-                    _In_ int sequence_number = INVALID_SEQUENCE_NUMBER);
+                    _In_ sairedis::SelectableChannel& consumer);
 
             sai_status_t processQuadEventInInitViewMode(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
                     _In_ sai_common_api_t api,
                     _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list);
+                    _In_ sai_attribute_t *attr_list,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             void processFlexCounterGroupEvent(
                     _In_ swss::ConsumerTable &consumer);
@@ -136,34 +151,41 @@ namespace syncd
         private:
 
             sai_status_t processNotifySyncd(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processSingleEvent(
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int sequence_number=INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber);
 
             sai_status_t processAttrCapabilityQuery(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processAttrEnumValuesCapabilityQuery(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processObjectTypeGetAvailabilityQuery(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processFdbFlush(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processClearStatsEvent(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processGetStatsEvent(
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processQuadEvent(
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber);
 
             sai_status_t processQuadEventTag(
                     _In_ sai_common_api_t api,
@@ -177,7 +199,7 @@ namespace syncd
             sai_status_t processBulkQuadEvent(
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber);
 
             sai_status_t processBulkOid(
                     _In_ sai_object_type_t objectType,
@@ -185,7 +207,7 @@ namespace syncd
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes, 
-                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber);
 
             sai_status_t processBulkEntry(
                     _In_ sai_object_type_t objectType,
@@ -193,7 +215,7 @@ namespace syncd
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
-                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
+                    _In_ int sequenceNumber);
 
             sai_status_t processBulkCreateEntry(
                     _In_ sai_object_type_t objectType,
@@ -217,7 +239,8 @@ namespace syncd
                     _In_ const std::vector<std::string> &object_ids,
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+                    _In_ int sequenceNumber);
 
             sai_status_t processOid(
                     _In_ sai_object_type_t objectType,
@@ -230,13 +253,15 @@ namespace syncd
                     _In_ const std::string &key,
                     _In_ const std::string &op,
                     _In_ const std::vector<swss::FieldValueTuple> &values,
-                    _In_ bool fromAsicChannel=true);
+                    _In_ bool fromAsicChannel = true,
+                    _In_ int sequenceNumber = 0); /*todo: replcae to SEQ_NUM_NV*/
 
             sai_status_t processFlexCounterEvent(
                     _In_ const std::string &key,
                     _In_ const std::string &op,
                     _In_ const std::vector<swss::FieldValueTuple> &values,
-                    _In_ bool fromAsicChannel=true);
+                    _In_ bool fromAsicChannel = true,
+                    _In_ int sequenceNumber = 0); /*todo: replcae to SEQ_NUM_NV*/
 
         private: // process quad oid
 
@@ -282,22 +307,34 @@ namespace syncd
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
                     _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list);
+                    _In_ sai_attribute_t *attr_list,
+                    _In_ sai_common_api_t api,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processQuadInInitViewModeRemove(
                     _In_ sai_object_type_t objectType,
-                    _In_ const std::string& strObjectId);
+                    _In_ const std::string& strObjectId,
+                    _In_ sai_common_api_t api,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
             sai_status_t processQuadInInitViewModeSet(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
-                    _In_ sai_attribute_t *attr);
+                    _In_ sai_attribute_t *attr,
+                    _In_ sai_common_api_t api,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,           
+                    _In_ int sequenceNumber);
 
             sai_status_t processQuadInInitViewModeGet(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
                     _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list);
+                    _In_ sai_attribute_t *attr_list,
+                    _In_ sai_common_api_t api,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
 
         private:
 
@@ -312,6 +349,55 @@ namespace syncd
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string>& objectIds,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+
+            void sendStausResponseSequence(
+                    _In_ sai_status_t status,
+                    _In_ const std::string& commandType,
+                    _In_ const std::vector<swss::FieldValueTuple>& entry,
+                    _In_ int sequenceNumber);
+
+            void sendStausAdvancedResponseSequence(
+                    _In_ int sequenceNumber,
+                    std::function<void()> lambdaFunc);
+					
+            void  sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
+                    _In_ sai_common_api_t api,
+                    _In_ sai_status_t status,
+                    _In_ sai_object_type_t objectType,
+                    _In_ const std::vector<std::string>& objectIds,
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+
+             void sendApiResponseUpdateRedisBulkQuadEvent(
+                    _In_ sai_common_api_t api,
+                    _In_ sai_status_t status,
+                    _In_ sai_object_type_t objectType,
+                    _In_ const std::vector<std::string>& objectIds,
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)  ;    
+             void sendApiResponseUpdateRedisQuadEvent(
+                    _In_ sai_common_api_t api,
+                    _In_ sai_status_t status,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);
+
+             void sendGetResponseUpdateRedisQuadEvent(
+                    _In_ sai_object_type_t objectType,
+                    _In_ const std::string& strObjectId,
+                    _In_ sai_object_id_t switchVid,
+                    _In_ sai_status_t status,
+                    _In_ uint32_t attr_count,
+                    _In_ sai_attribute_t *attr_list,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ sai_common_api_t api);
+
+             void sendStatusAndEntryResponse(
+                    _In_ sai_status_t status,
+                    _In_ const std::string& commandType,
+                    _In_ const std::vector<swss::FieldValueTuple>& entry);
+
+             void processFdbFlushResponse(
+                    _In_ sai_status_t status,
+                    _In_ std::vector<swss::FieldValueTuple> values,
+                    _In_ sai_object_id_t switchVid);
 
         public: // TODO to private
 
@@ -378,32 +464,17 @@ namespace syncd
                     _In_ uint32_t object_count = 0,
                     _In_ sai_status_t * object_statuses = NULL);
 
-            void sendApiResponseSequence(
-                    _In_ sai_common_api_t api,
-                    _In_ sai_status_t status,
-                    _In_ uint32_t object_count = 0,
-                    _In_ sai_status_t * object_statuses = NULL,
-                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
-
             void sendGetResponse(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
                     _In_ sai_object_id_t switchVid,
                     _In_ sai_status_t status,
                     _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list);
-
-            void sendGetResponseSequence(
-                    _In_ sai_object_type_t objectType,
-                    _In_ const std::string& strObjectId,
-                    _In_ sai_object_id_t switchVid,
-                    _In_ sai_status_t status,
-                    _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list,
-                    _In_ int sequenceNumber = INVALID_SEQUENCE_NUMBER);
+                    _In_ sai_attribute_t *attr_listsendApiResponse);
 
             void sendNotifyResponse(
-                    _In_ sai_status_t status);
+                    _In_ sai_status_t status,
+                    _In_ int sequenceNumber);
 
         private: // snoop get response oids
 
@@ -447,8 +518,8 @@ namespace syncd
         public: // TODO to private
 
             bool m_asicInitViewMode;
-            void pushRingBuffer(AnyTask&& func);
-            void popRingBuffer();
+            void pushRingBuffer(SyncdRing* ringBuffer , AnyTask&& func);
+            void popRingBuffer(SyncdRing* ringBuffer);
             void enableRingBuffer();
 
             std::shared_ptr<FlexCounterManager> m_manager;
@@ -563,130 +634,211 @@ namespace syncd
 
             std::set<sai_object_id_t> m_createdInInitView;
         
-        protected:
-                /* Orchdaemon instance points to the same ring buffer during its lifetime */
-                SyncdRing* gRingBuffer = nullptr;
-                std::atomic<bool> ring_thread_exited{false};
-    };
-        typedef std::map<std::string, std::string> EventMap;
-        template<typename DataType, int RingSize>
-        class RingBuffer
-        {
         private:
-        static RingBuffer<DataType, RingSize>* instance;
-        std::vector<DataType> buffer;
-        int head = 0;
-        int tail = 0;
-        void point();
-        EventMap m_eventMap;
-        protected:
-        RingBuffer<DataType, RingSize>(): buffer(RingSize) {}
-        ~RingBuffer<DataType, RingSize>() {
-                delete instance;
-        }
-        public:
-        RingBuffer<DataType, RingSize>(const RingBuffer<DataType, RingSize>&) = delete;
-        RingBuffer<DataType, RingSize>(RingBuffer<DataType, RingSize>&&) = delete;
-        RingBuffer<DataType, RingSize>& operator= (const RingBuffer<DataType, RingSize>&) = delete;
-        RingBuffer<DataType, RingSize>& operator= (RingBuffer<DataType, RingSize>&&) = delete;
-        static RingBuffer<DataType, RingSize>* Get();
-        bool Started = false;
-        bool Idle = true;
-        std::mutex mtx;
-        std::condition_variable cv;
-        bool IsFull();
-        bool IsEmpty();
-        bool push(DataType entry);
-        bool pop(DataType& entry);
-        DataType& HeadEntry();
-        void addEvent(std::string* executor);
-        void doTask();
-        bool tasksPending();
-        bool Serves(const std::string& tableName);
-        };
+            std::map<std::string, std::thread> ringBufferThreads;
+            std::map<std::string, OperationGroup> operationGroups;
+            std::atomic<bool> ring_thread_exited{false};
 
-        
-template<typename DataType, int RingSize>
-RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::instance = nullptr;
-template<typename DataType, int RingSize>
-RingBuffer<DataType, RingSize>* RingBuffer<DataType, RingSize>::Get()
-{
-    if (instance == nullptr) {
-        instance = new RingBuffer<DataType, RingSize>();
-        SWSS_LOG_NOTICE("Syncd RingBuffer created at %p!", (void *)instance);
-    }
-    return instance;
-}
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::IsFull()
-{
-    return (tail + 1) % RingSize == head;
-}
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::IsEmpty()
-{
-    return tail == head;
-}
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::push(DataType ringEntry)
-{
-    if (IsFull()){
-        SWSS_LOG_WARN("pushRing is full");
-        return false;
-    }
-    buffer[tail] = std::move(ringEntry);
-    tail = (tail + 1) % RingSize;
-    return true;
-}
-template<typename DataType, int RingSize>
-DataType& RingBuffer<DataType, RingSize>::HeadEntry() {
-    return buffer[head];
-}
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::pop(DataType& ringEntry)
-{
-    if (IsEmpty())
-        return false;
-    ringEntry = std::move(buffer[head]);
-    head = (head + 1) % RingSize;
-    return true;
-}
-template<typename DataType, int RingSize>
-void RingBuffer<DataType, RingSize>::addEvent(std::string* executor)
-{
-//     auto inserted = m_eventMap.emplace(std::piecewise_construct,
-//             std::forward_as_tuple(executor->getName()),
-//             std::forward_as_tuple(executor));
-//     // If there is duplication of executorName in m_eventMap, logic error
-//     if (!inserted.second)
-//     {
-//         SWSS_LOG_THROW("Duplicated executorName in m_eventMap: %s", executor->getName().c_str());
-//     }
-}
-template<typename DataType, int RingSize>
-void RingBuffer<DataType, RingSize>::doTask()
-{
-//     for (auto &it : m_eventMap) {
-//         it.second->drain();
-//     }
-}
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::tasksPending()
-{
-//     for (auto &it : m_eventMap) {
-//         auto consumer = dynamic_cast<Consumer *>(it.second.get());
-//         if (consumer->m_toSync.size())
-//             return true;
-//     }
-    return false;
-}
-template<typename DataType, int RingSize>
-bool RingBuffer<DataType, RingSize>::Serves(const std::string& tableName)
-{
-//     for (auto &it : m_eventMap) {
-//         if (it.first == tableName)
-//             return true;
-//     }
-    return true;
-}
+            void getApiRingBuffer(
+                        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                        _Out_ SyncdRing*& ringBuffer);
+                        
+            void getObjectTypeByOperation(
+                        _In_ swss::KeyOpFieldsValuesTuple kco,
+                        _Out_ sai_object_type_t &objectType);
+
+                // Declare saiObjectTypes as a member variable
+            std::vector<SaiObjectType> saiObjectTypes = {                
+                        {SAI_OBJECT_TYPE_NULL, "SAI_OBJECT_TYPE_NULL"},
+                        {SAI_OBJECT_TYPE_PORT, "SAI_OBJECT_TYPE_PORT"},
+                        {SAI_OBJECT_TYPE_LAG, "SAI_OBJECT_TYPE_LAG"},
+                        {SAI_OBJECT_TYPE_VIRTUAL_ROUTER, "SAI_OBJECT_TYPE_VIRTUAL_ROUTER"},
+                        {SAI_OBJECT_TYPE_NEXT_HOP, "SAI_OBJECT_TYPE_NEXT_HOP"},
+                        {SAI_OBJECT_TYPE_NEXT_HOP_GROUP, "SAI_OBJECT_TYPE_NEXT_HOP_GROUP"},
+                        {SAI_OBJECT_TYPE_ROUTER_INTERFACE, "SAI_OBJECT_TYPE_ROUTER_INTERFACE"},
+                        {SAI_OBJECT_TYPE_ACL_TABLE, "SAI_OBJECT_TYPE_ACL_TABLE"},
+                        {SAI_OBJECT_TYPE_ACL_ENTRY, "SAI_OBJECT_TYPE_ACL_ENTRY"},
+                        {SAI_OBJECT_TYPE_ACL_COUNTER, "SAI_OBJECT_TYPE_ACL_COUNTER"},
+                        {SAI_OBJECT_TYPE_ACL_RANGE, "SAI_OBJECT_TYPE_ACL_RANGE"},
+                        {SAI_OBJECT_TYPE_ACL_TABLE_GROUP, "SAI_OBJECT_TYPE_ACL_TABLE_GROUP"},
+                        {SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER, "SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER"},
+                        {SAI_OBJECT_TYPE_HOSTIF, "SAI_OBJECT_TYPE_HOSTIF"},
+                        {SAI_OBJECT_TYPE_MIRROR_SESSION, "SAI_OBJECT_TYPE_MIRROR_SESSION"},
+                        {SAI_OBJECT_TYPE_SAMPLEPACKET, "SAI_OBJECT_TYPE_SAMPLEPACKET"},
+                        {SAI_OBJECT_TYPE_STP, "SAI_OBJECT_TYPE_STP"},
+                        {SAI_OBJECT_TYPE_HOSTIF_TRAP_GROUP, "SAI_OBJECT_TYPE_HOSTIF_TRAP_GROUP"},
+                        {SAI_OBJECT_TYPE_POLICER, "SAI_OBJECT_TYPE_POLICER"},
+                        {SAI_OBJECT_TYPE_WRED, "SAI_OBJECT_TYPE_WRED"},
+                        {SAI_OBJECT_TYPE_QOS_MAP, "SAI_OBJECT_TYPE_QOS_MAP"},
+                        {SAI_OBJECT_TYPE_QUEUE, "SAI_OBJECT_TYPE_QUEUE"},
+                        {SAI_OBJECT_TYPE_SCHEDULER, "SAI_OBJECT_TYPE_SCHEDULER"},
+                        {SAI_OBJECT_TYPE_SCHEDULER_GROUP, "SAI_OBJECT_TYPE_SCHEDULER_GROUP"},
+                        {SAI_OBJECT_TYPE_BUFFER_POOL, "SAI_OBJECT_TYPE_BUFFER_POOL"},
+                        {SAI_OBJECT_TYPE_BUFFER_PROFILE, "SAI_OBJECT_TYPE_BUFFER_PROFILE"},
+                        {SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP, "SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP"},
+                        {SAI_OBJECT_TYPE_LAG_MEMBER, "SAI_OBJECT_TYPE_LAG_MEMBER"},
+                        {SAI_OBJECT_TYPE_HASH, "SAI_OBJECT_TYPE_HASH"},
+                        {SAI_OBJECT_TYPE_UDF, "SAI_OBJECT_TYPE_UDF"},
+                        {SAI_OBJECT_TYPE_UDF_MATCH, "SAI_OBJECT_TYPE_UDF_MATCH"},
+                        {SAI_OBJECT_TYPE_UDF_GROUP, "SAI_OBJECT_TYPE_UDF_GROUP"},
+                        {SAI_OBJECT_TYPE_FDB_ENTRY, "SAI_OBJECT_TYPE_FDB_ENTRY"},
+                        {SAI_OBJECT_TYPE_SWITCH, "SAI_OBJECT_TYPE_SWITCH"},
+                        {SAI_OBJECT_TYPE_HOSTIF_TRAP, "SAI_OBJECT_TYPE_HOSTIF_TRAP"},
+                        {SAI_OBJECT_TYPE_HOSTIF_TABLE_ENTRY, "SAI_OBJECT_TYPE_HOSTIF_TABLE_ENTRY"},
+                        {SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, "SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"},
+                        {SAI_OBJECT_TYPE_ROUTE_ENTRY, "SAI_OBJECT_TYPE_ROUTE_ENTRY"},
+                        {SAI_OBJECT_TYPE_VLAN, "SAI_OBJECT_TYPE_VLAN"},
+                        {SAI_OBJECT_TYPE_VLAN_MEMBER, "SAI_OBJECT_TYPE_VLAN_MEMBER"},
+                        {SAI_OBJECT_TYPE_HOSTIF_PACKET, "SAI_OBJECT_TYPE_HOSTIF_PACKET"},
+                        {SAI_OBJECT_TYPE_TUNNEL_MAP, "SAI_OBJECT_TYPE_TUNNEL_MAP"},
+                        {SAI_OBJECT_TYPE_TUNNEL, "SAI_OBJECT_TYPE_TUNNEL"},
+                        {SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY, "SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"},
+                        {SAI_OBJECT_TYPE_FDB_FLUSH, "SAI_OBJECT_TYPE_FDB_FLUSH"},
+                        {SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER, "SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"},
+                        {SAI_OBJECT_TYPE_STP_PORT, "SAI_OBJECT_TYPE_STP_PORT"},
+                        {SAI_OBJECT_TYPE_RPF_GROUP, "SAI_OBJECT_TYPE_RPF_GROUP"},
+                        {SAI_OBJECT_TYPE_RPF_GROUP_MEMBER, "SAI_OBJECT_TYPE_RPF_GROUP_MEMBER"},
+                        {SAI_OBJECT_TYPE_L2MC_GROUP, "SAI_OBJECT_TYPE_L2MC_GROUP"},
+                        {SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER, "SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER"},
+                        {SAI_OBJECT_TYPE_IPMC_GROUP, "SAI_OBJECT_TYPE_IPMC_GROUP"},
+                        {SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER, "SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER"},
+                        {SAI_OBJECT_TYPE_L2MC_ENTRY, "SAI_OBJECT_TYPE_L2MC_ENTRY"},
+                        {SAI_OBJECT_TYPE_IPMC_ENTRY, "SAI_OBJECT_TYPE_IPMC_ENTRY"},
+                        {SAI_OBJECT_TYPE_MCAST_FDB_ENTRY, "SAI_OBJECT_TYPE_MCAST_FDB_ENTRY"},
+                        {SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP, "SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP"},
+                        {SAI_OBJECT_TYPE_BRIDGE, "SAI_OBJECT_TYPE_BRIDGE"},
+                        {SAI_OBJECT_TYPE_BRIDGE_PORT, "SAI_OBJECT_TYPE_BRIDGE_PORT"},
+                        {SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY, "SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY"},
+                        {SAI_OBJECT_TYPE_MAX, "SAI_OBJECT_TYPE_MAX"}
+                };
+
+        sai_status_t initializeOperationGroups() {
+                
+                // make sure all object types are accounted for
+                //if(saiObjectTypes.size() != (SAI_OBJECT_TYPE_MAX+1))
+                //        return SAI_STATUS_FAILURE;
+
+                std::set<std::string> miscOperations = {
+                        //REDIS_ASIC_STATE_COMMAND_NOTIFY,  // Not included in the list (flow without ringbuff)
+                        REDIS_ASIC_STATE_COMMAND_GET_STATS,
+                        REDIS_ASIC_STATE_COMMAND_CLEAR_STATS,
+                        REDIS_ASIC_STATE_COMMAND_FLUSH,
+                        REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_QUERY,
+                        REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_QUERY,
+                        REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY,
+                        REDIS_FLEX_COUNTER_COMMAND_START_POLL,
+                        REDIS_FLEX_COUNTER_COMMAND_STOP_POLL,
+                        REDIS_FLEX_COUNTER_COMMAND_SET_GROUP,
+                        REDIS_FLEX_COUNTER_COMMAND_DEL_GROUP
+                };                 
+
+
+                std::array<int, 43> crudOperations1Enums = {
+                        SAI_OBJECT_TYPE_NULL,
+                        SAI_OBJECT_TYPE_PORT,
+                        SAI_OBJECT_TYPE_LAG,                        
+                        SAI_OBJECT_TYPE_ACL_TABLE,
+                        SAI_OBJECT_TYPE_ACL_ENTRY,
+                        SAI_OBJECT_TYPE_ACL_COUNTER,
+                        SAI_OBJECT_TYPE_ACL_RANGE,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_HOSTIF,
+                        SAI_OBJECT_TYPE_MIRROR_SESSION,
+                        SAI_OBJECT_TYPE_SAMPLEPACKET,
+                        SAI_OBJECT_TYPE_STP,
+                        SAI_OBJECT_TYPE_HOSTIF_TRAP_GROUP,
+                        SAI_OBJECT_TYPE_POLICER,
+                        SAI_OBJECT_TYPE_WRED,
+                        SAI_OBJECT_TYPE_QOS_MAP,
+                        SAI_OBJECT_TYPE_QUEUE,
+                        SAI_OBJECT_TYPE_SCHEDULER,
+                        SAI_OBJECT_TYPE_SCHEDULER_GROUP,
+                        SAI_OBJECT_TYPE_BUFFER_POOL,
+                        SAI_OBJECT_TYPE_BUFFER_PROFILE,
+                        SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP,
+                        SAI_OBJECT_TYPE_LAG_MEMBER,
+                        SAI_OBJECT_TYPE_HASH,
+                        SAI_OBJECT_TYPE_UDF,
+                        SAI_OBJECT_TYPE_UDF_MATCH,
+                        SAI_OBJECT_TYPE_UDF_GROUP,
+                        SAI_OBJECT_TYPE_FDB_ENTRY,
+                        //SAI_OBJECT_TYPE_SWITCH,  // Not included in the list (floow without ringbuff)
+                        SAI_OBJECT_TYPE_HOSTIF_TRAP,
+                        SAI_OBJECT_TYPE_HOSTIF_TABLE_ENTRY,
+                        SAI_OBJECT_TYPE_VLAN,
+                        SAI_OBJECT_TYPE_VLAN_MEMBER,
+                        SAI_OBJECT_TYPE_HOSTIF_PACKET,
+                        SAI_OBJECT_TYPE_FDB_FLUSH,
+                        SAI_OBJECT_TYPE_STP_PORT,                        
+                        SAI_OBJECT_TYPE_L2MC_GROUP,
+                        SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER,                        
+                        SAI_OBJECT_TYPE_L2MC_ENTRY,                        
+                        SAI_OBJECT_TYPE_MCAST_FDB_ENTRY,
+                        SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                        SAI_OBJECT_TYPE_BRIDGE,
+                        SAI_OBJECT_TYPE_BRIDGE_PORT
+                };
+
+                std::array<int, 16> crudOperations2Enums = {
+                        SAI_OBJECT_TYPE_VIRTUAL_ROUTER,
+                        SAI_OBJECT_TYPE_NEXT_HOP,
+                        SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                        SAI_OBJECT_TYPE_ROUTER_INTERFACE,  
+                        SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                        SAI_OBJECT_TYPE_ROUTE_ENTRY,
+                        SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_RPF_GROUP,
+                        SAI_OBJECT_TYPE_RPF_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_IPMC_GROUP,
+                        SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_IPMC_ENTRY,
+                        SAI_OBJECT_TYPE_TUNNEL_MAP,
+                        SAI_OBJECT_TYPE_TUNNEL,
+                        SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
+                        SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY
+                };
+
+                // Populate crudOperations1 using the enums array
+                std::set<std::string> crudOperations1;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations1Enums.begin(), crudOperations1Enums.end(), item.enumValue) != crudOperations1Enums.end()) {
+                                crudOperations1.insert(item.enumString);
+                        }
+                }
+
+                // Populate crudOperations2 using the enums array
+                std::set<std::string> crudOperations2;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations2Enums.begin(), crudOperations2Enums.end(), item.enumValue) != crudOperations2Enums.end()) {
+                                crudOperations2.insert(item.enumString);
+                        }
+                }
+ 
+                // Allocate new SyncdRing instances for each operation group
+                auto crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
+                auto crudRingBuffer2 = new SyncdRing(); // Adjust size if needed
+                auto miscRingBuffer = new SyncdRing(); // Adjust size if needed
+
+                // Map the operation groups
+                operationGroups = {
+                        {"crud1", {crudOperations1, crudRingBuffer1}},
+                        {"crud2", {crudOperations2, crudRingBuffer2}},
+                        {"misc", {miscOperations, miscRingBuffer}},
+                        // Add other groups here...
+                };
+
+                return SAI_STATUS_SUCCESS;
+            }
+
+            std::string getNameByRingBuffer(SyncdRing* ringBuffer) 
+            {
+                for (const auto& pair : operationGroups) {
+                        if (pair.second.ringBuffer == ringBuffer) {
+                                return pair.first;
+                        }
+                }
+                return "Not_found"; // Return a default value if not found
+            }
+        };
 }
