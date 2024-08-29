@@ -16,6 +16,7 @@
 #include <ctime>
 
 #define MAX_LOG_SIZE    (50 * 1024) /* 50 KB */
+#define ENABLE_LOGGING  1
 
 // Define a mutex for thread safety
 static std::mutex logMutex;
@@ -95,7 +96,11 @@ static void logFormattedMessage(const std::string& funcName, const std::string& 
     // Write the full message to the log file
     writeToLogFile(funcName, fileNum, oss.str());
 }
+#if ENABLE_LOGGING
 // Macro for easy logging with formatting
 #define LogToModuleFile(fileNum, format, ...) logFormattedMessage(__func__, fileNum, format, ##__VA_ARGS__)
+#else
+#define LogToModuleFile(fileNum, format, ...)
+#endif
 
 #endif // LOGGER_H
