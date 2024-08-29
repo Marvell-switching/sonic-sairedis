@@ -70,6 +70,7 @@ Sequencer::SequenceStatus Sequencer::allocateSequenceNumber(int *seq_num) {
     if(isFull()) {
         logMsg = "multithreaded: Sequencer is full, cannot allocate sequence number" + std::to_string(current_seq);
         LogToModuleFile("1", logMsg);
+        *seq_num = INVALID_SEQUENCE_NUMBER;
         return BUFFER_OVERFLOW;
     }
 

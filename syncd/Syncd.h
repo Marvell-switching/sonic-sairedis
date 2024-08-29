@@ -75,6 +75,8 @@ namespace syncd
 
         public: // TODO private
 
+            int getSeqNumber();
+
             void processEvent(
                     _In_ sairedis::SelectableChannel& consumer,
                     _In_ int sequence_number = INVALID_SEQUENCE_NUMBER);

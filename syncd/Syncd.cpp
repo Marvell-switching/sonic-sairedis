@@ -356,14 +356,31 @@ void point(_In_ const swss::KeyOpFieldsValuesTuple &kco){
     gdb_mode = 1;
 }
 
+int Syncd::getSeqNumber() {
+    int sequence_number = 0;
+    if(int seq_status = m_sequencer->allocateSequenceNumber(&sequence_number) != Sequencer::SUCCESS)
+    {
+        std::string logMsg = "Failed to allocate sequence number: " + std::to_string(seq_status);
+        LogToModuleFile("1", logMsg);
+    }
+    else {
+        std::string logMsg = "Allocated sequence number: " + std::to_string(sequence_number);
+        LogToModuleFile("1", logMsg);
+    }
+
+    // in case of failure, make sure that sequence number is correct
+
+    std::string logMessage = "multithreaded: BEFORE PUSH INTO RING BUFFER sequence number: " + std::to_string(sequence_number);
+    LogToModuleFile("1", logMessage.c_str());
+
+    return sequence_number;
+}
 void Syncd::processEvent(
         _In_ sairedis::SelectableChannel& consumer,
         _In_ int sequence_number)
 {
     SWSS_LOG_ENTER();
     static int entries = 0;
-    //int sequencer_number;
-    //SWSS_LOG_NOTICE("multithreaded: !!!processEvent, ITERATION: %d!!!", entries++);
     std::string logMessage = "multithreaded: !!!processEvent, ITERATION: " + std::to_string(entries++) + "!!!";
     LogToModuleFile("1", logMessage.c_str());
 
@@ -372,8 +389,14 @@ void Syncd::processEvent(
     {
         swss::KeyOpFieldsValuesTuple kco;
         consumer.pop(kco, isInitViewMode());
-        processSingleEvent(kco, sequence_number);
 
+        auto lambda = [=](){
+            LogToModuleFile("1", "multithreaded: inside lambda, start processing event");
+            processSingleEvent(kco, getSeqNumber());
+            LogToModuleFile("1", "multithreaded: inside lambda, end processing event");
+        };
+
+        pushRingBuffer(lambda);
 
         /*
          * In init mode we put all data to TEMP view and we snoop.  We need
@@ -5373,6 +5396,7 @@ void Syncd::run()
             int result = s->select(&sel);
             int sequence_number; 
             
+#if 0
             if(int seq_status = m_sequencer->allocateSequenceNumber(&sequence_number) != Sequencer::SUCCESS)
             {
                 std::string logMsg = "Failed to allocate sequence number: " + std::to_string(seq_status);
@@ -5389,6 +5413,7 @@ void Syncd::run()
 
             std::string logMessage = "multithreaded: BEFORE PUSH INTO RING BUFFER sequence number: " + std::to_string(sequence_number);
             LogToModuleFile("1", logMessage.c_str());
+#endif
 
             //restart query sequencer
             if (sel == m_restartQuery.get())
@@ -5405,7 +5430,7 @@ void Syncd::run()
 
                 while (!m_selectableChannel->empty())
                 {
-                    processEvent(*m_selectableChannel.get(), sequence_number);
+                    processEvent(*m_selectableChannel.get());
                 }
 
                 SWSS_LOG_NOTICE("drained queue");
@@ -5491,9 +5516,10 @@ void Syncd::run()
                     LogToModuleFile("1", "multithreaded: inside lambda, end m_flexCounter");
                 };
 
+                sequence_number = getSeqNumber();
                 if(int seq_status = m_sequencer->executeFuncInSequence(sequence_number, lambda) != Sequencer::SUCCESS)
                 {
-                    logMessage = "m_flexCounter failed to execute function in sequence, status: " + std::to_string(seq_status) + ", sequence number: " + std::to_string(sequence_number);
+                    std::string logMessage = "m_flexCounter failed to execute function in sequence, status: " + std::to_string(seq_status) + ", sequence number: " + std::to_string(sequence_number);
                     LogToModuleFile("1", logMessage);
                 }
             }
@@ -5506,9 +5532,10 @@ void Syncd::run()
                     LogToModuleFile("1", "multithreaded: inside lambda, end m_flexCounterGroup");
                 };
 
+                sequence_number = getSeqNumber();
                 if(int seq_status = m_sequencer->executeFuncInSequence(sequence_number, lambda) != Sequencer::SUCCESS)
                 {
-                    logMessage = "m_flexCounterGroup failed to execute function in sequence, status: " + std::to_string(seq_status) + ", sequence number: " + std::to_string(sequence_number);
+                    std::string logMessage = "m_flexCounterGroup failed to execute function in sequence, status: " + std::to_string(seq_status) + ", sequence number: " + std::to_string(sequence_number);
                     LogToModuleFile("1", logMessage);
                 }
             }
@@ -5516,7 +5543,7 @@ void Syncd::run()
             {
                 auto lambda = [=](){
                     LogToModuleFile("1", "multithreaded: inside lambda, start processing event");
-                    processEvent(*m_selectableChannel.get(), sequence_number);
+                    processEvent(*m_selectableChannel.get());
                     LogToModuleFile("1", "multithreaded: inside lambda, end processing event");
                 };
         
