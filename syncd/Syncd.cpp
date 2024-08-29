@@ -5471,8 +5471,8 @@ void Syncd::getApiRingBuffer(
         if (SAI_OBJECT_TYPE_NULL != objectType) // valid object type valid
         {
             LogToModuleFile("1", "find ring buffer by object type  {}",sai_serialize_object_type(objectType).c_str()); 
-            SWSS_LOG_DEBUG("objectType %s ", sai_serialize_object_type(objectType).c_str());    
-            it = operationGroups.find(sai_serialize_object_type(objectType).c_str());   
+            SWSS_LOG_DEBUG("objectType %s ", sai_serialize_object_type(objectType).c_str());
+            it = operationGroups.find(sai_serialize_object_type(objectType));   
         }
     }
     else
