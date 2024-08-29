@@ -3341,7 +3341,7 @@ sai_status_t Syncd::processOidCreate(
 
             m_mdioIpcServer->setSwitchId(objectRid);
 
-            // startDiagShell(objectRid);
+            startDiagShell(objectRid);
         }
 
         if (objectType == SAI_OBJECT_TYPE_PORT)
@@ -4600,10 +4600,10 @@ void Syncd::onSyncdStart(
 
     m_switches = hr.hardReinit();
 
-    // for (auto& sw: m_switches)
-    // {
-    //     startDiagShell(sw.second->getRid());
-    // }
+    for (auto& sw: m_switches)
+    {
+        startDiagShell(sw.second->getRid());
+    }
 
     SWSS_LOG_NOTICE("hard reinit succeeded");
 }
@@ -4702,7 +4702,7 @@ void Syncd::onSwitchCreateInInitViewMode(
 
         m_mdioIpcServer->setSwitchId(switchRid);
 
-        //startDiagShell(switchRid);
+        startDiagShell(switchRid);
     }
     else
     {
@@ -4884,7 +4884,7 @@ void Syncd::performWarmRestartSingleSwitch(
 
     auto sw = m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, switchRid, m_client, m_translator, m_vendorSai, true);
 
-    //startDiagShell(switchRid);
+    startDiagShell(switchRid);
 }
 
 void Syncd::performWarmRestart()

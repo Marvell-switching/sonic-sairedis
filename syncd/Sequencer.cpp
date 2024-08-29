@@ -14,17 +14,17 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
 
     while (true) {
         // Check if the next sequence number is in the map
-        auto func = responses.find(next_seq_to_send);
-        if (func == responses.end()) {
+        auto seq_data = responses.find(next_seq_to_send);
+        if (seq_data == responses.end()) {
             logMsg += "multithreaded: No next sequence found in queue \n";
             status = SUCCESS;
             break;  // Exit loop if the next sequence is not in the map
         }
 
-        // imporve readability, don't use second() directly
         // Execute the stored lambda
-        if(func->second) {
-            func->second();  
+        auto func = seq_data->second;
+        if(func) {
+            func();  
             logMsg += "multithreaded: Executing lambda with seq: " + std::to_string(next_seq_to_send) + " \n";
             status = NULL_PTR;
         }
@@ -38,7 +38,7 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
         max_num_of_executed_tasks_in_sequence++; 
 
         // Safely erase the entry
-        responses.erase(func);  
+        responses.erase(seq_data);  
         
         // Increment the sequence number
         ++next_seq_to_send; 
