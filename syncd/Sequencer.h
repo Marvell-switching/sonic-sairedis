@@ -13,44 +13,63 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <cstdio>
-#include "Logger.h"
+//#include "Logger.h"
 
+#define MODULE_NAME     "multithreadedsyncd"
+
+#define MAX_LOG_SIZE    (500 * 1024) /* 500 KB */
+
+// Improved logging function with thread safety
+void writeToLogFile(const std::string& funcName, const std::string& fileNum, const std::string& message);
 
 namespace syncd {
 
-    #define MAX_SEQUENCE_NUMBER 1000000
-    #define INVALID_SEQUENCE_NUMBER std::numeric_limits<int>::min()
+    #define MAX_SEQUENCE_NUMBER 1024
+    #define INVALID_SEQUENCE_NUMBER std::numeric_limits<int>::min() // allow user to choose
     using AnyTask = std::function<void()>;
 
     class Sequencer {
     public:
         // Public constructor
-        Sequencer() : current_seq(0), next_seq_to_send(0), last_update_time(std::chrono::steady_clock::now()) {}
+        Sequencer() : current_seq(0), next_seq_to_send(0), max_seq_num(MAX_SEQUENCE_NUMBER), max_num_of_executed_tasks_in_sequence(0), num_of_null_functions(0), num_of_out_of_sequence_functions(0) {}
 
         // Public destructor
         ~Sequencer() {}
 
+        enum SequenceStatus {
+            FAILURE = -1,
+            SUCCESS = 0,
+            BUFFER_OVERFLOW = 1,
+            NULL_PTR = 2,
+        };
+        
         // Get sequence number
-        int allocateSequenceNumber();
+        SequenceStatus allocateSequenceNumber(int *seq_num);
 
         // Add/Execute sequence function
-        void executeFuncInSequence(int seq, std::function<void()> response_lambda);
+        SequenceStatus executeFuncInSequence(int seq, std::function<void()> response_lambda);
 
     private:
-        // Reset the sequence number to avoid overflow
-        void resetSequence();
-
         // Watchdog function to monitor inactivity
-        void performWatchdogCheck();
+        SequenceStatus performWatchdogCheck();
 
         // Helper function to execute all ready responses in order
-        void executeReadyResponses();
+        SequenceStatus executeReadyResponses();
+
+        SequenceStatus showStatistics();
+
+        SequenceStatus clearStatistics();
+
+        bool isFull();
 
         int current_seq;  // Tracks the latest sequence number assigned to a task
         int next_seq_to_send;  // The next sequence number that should be sent
+        long unsigned int max_seq_num;  // The maximum sequence number
+        int max_num_of_executed_tasks_in_sequence; // The maximum number of executed tasks in sequence
+        int num_of_null_functions; // The number of null functions
+        int num_of_out_of_sequence_functions; // The number of out of sequence functions
         std::mutex mtx;  // Protects shared data
         std::map<int, std::function<void()>> responses;  // Stores responses by sequence number
-        std::chrono::steady_clock::time_point last_update_time;  // Time of the last sequence update
     };
     
 }
