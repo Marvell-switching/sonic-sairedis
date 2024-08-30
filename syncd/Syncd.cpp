@@ -5451,6 +5451,33 @@ void Syncd::getObjectTypeByOperation(
     }
 }
 
+// Internal function to find and log operation group details
+bool Syncd::findOperationGroup(
+    const std::string& valueStr,
+    SyncdRing*& ringBuffer
+) {
+    bool found = false;
+
+    for (const auto& pair : operationGroups) {
+        const std::string& groupName = pair.first;
+        const OperationGroup& operationGroup = pair.second;
+
+        if (operationGroup.operations.find(valueStr) != operationGroup.operations.end()) {
+            ringBuffer = operationGroup.ringBuffer;
+            LogToModuleFile("1", "Found {} in operation group: {}", valueStr, groupName);
+            LogToModuleFile("1", "Ring buffer pointer: {}", reinterpret_cast<void*>(ringBuffer));
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        LogToModuleFile("1", "value {} not found in any operation group", valueStr);
+    }
+
+    return found;
+}
+
 void Syncd::getApiRingBuffer(
     _In_ const swss::KeyOpFieldsValuesTuple &kco,
     _Out_ SyncdRing*& ringBuffer)
@@ -5462,30 +5489,24 @@ void Syncd::getApiRingBuffer(
 
     SWSS_LOG_DEBUG("op: %s key:%s", op.c_str(), key.c_str());
 
-    auto it = operationGroups.find(op);
-    if (it == operationGroups.end()) //not found
-    {
+    bool found = false;
+    std::string valueStr = op.c_str();
+
+    found = findOperationGroup(valueStr, ringBuffer);
+
+    if (!found) {
         sai_object_type_t objectType = SAI_OBJECT_TYPE_NULL;
         getObjectTypeByOperation(kco, objectType);
 
-        if (SAI_OBJECT_TYPE_NULL != objectType) // valid object type valid
-        {
-            LogToModuleFile("1", "find ring buffer by object type  {}",sai_serialize_object_type(objectType).c_str()); 
-            SWSS_LOG_DEBUG("objectType %s ", sai_serialize_object_type(objectType).c_str());
-            it = operationGroups.find(sai_serialize_object_type(objectType));   
+        if (SAI_OBJECT_TYPE_NULL != objectType) { // valid object type
+            valueStr = sai_serialize_object_type(objectType);
+            found = findOperationGroup(valueStr, ringBuffer);
         }
     }
-    else
-        LogToModuleFile("1", "find ring buffer by op {}", op.c_str());
 
-    if (it != operationGroups.end())
-    {
-        OperationGroup& group = it->second;
-        ringBuffer = group.ringBuffer;
-        LogToModuleFile("1", "found ring buffer {}", getNameByRingBuffer(ringBuffer)); 
+    if (!found) {
+        LogToModuleFile("1", "didn't match ring buffer to api");
     }
-    else
-        LogToModuleFile("1", "didnt match ring buffer to api"); 
 }
 
 void Syncd::run()

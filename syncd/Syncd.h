@@ -831,14 +831,22 @@ namespace syncd
                 return SAI_STATUS_SUCCESS;
             }
 
+            bool findOperationGroup(
+                const std::string& valueStr,
+                SyncdRing*& ringBuffer
+            );
+
             std::string getNameByRingBuffer(SyncdRing* ringBuffer) 
             {
                 for (const auto& pair : operationGroups) {
                         if (pair.second.ringBuffer == ringBuffer) {
-                                return pair.first;
+                        return pair.first;
                         }
                 }
+
                 return "Not_found"; // Return a default value if not found
             }
+
+
         };
 }
