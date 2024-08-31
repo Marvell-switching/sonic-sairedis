@@ -363,6 +363,7 @@ namespace syncd
             void  sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
                     _In_ sai_common_api_t api,
                     _In_ sai_status_t status,
+                    _In_ uint32_t object_count,
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string>& objectIds,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
@@ -370,6 +371,7 @@ namespace syncd
              void sendApiResponseUpdateRedisBulkQuadEvent(
                     _In_ sai_common_api_t api,
                     _In_ sai_status_t status,
+                    _In_ uint32_t object_count,
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string>& objectIds,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)  ;    

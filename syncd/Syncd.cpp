@@ -1056,6 +1056,7 @@ void Syncd::sendGetResponseUpdateRedisQuadEvent(
 void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
     _In_ sai_common_api_t api,
     _In_ sai_status_t status,
+	_In_ uint32_t object_count,
     _In_ sai_object_type_t objectType,
     _In_ const std::vector<std::string>& objectIds,
     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
@@ -1064,7 +1065,7 @@ void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
 
     std::vector<sai_status_t> statuses(objectIds.size());
 
-    sendApiResponse(api, status, static_cast<uint32_t>(statuses.size()), statuses.data());
+    sendApiResponse(api, status, object_count, statuses.data());
 
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 }
@@ -1072,6 +1073,7 @@ void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
 void Syncd::sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
     _In_ sai_common_api_t api,
     _In_ sai_status_t status,
+    _In_ uint32_t object_count,
     _In_ sai_object_type_t objectType,
     _In_ const std::vector<std::string>& objectIds,
     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
@@ -1080,7 +1082,7 @@ void Syncd::sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
 
     std::vector<sai_status_t> statuses(objectIds.size());
 
-    sendApiResponse(api, status, static_cast<uint32_t>(statuses.size()), statuses.data());
+    sendApiResponse(api, status, object_count, statuses.data());
 
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
@@ -1124,7 +1126,7 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
             {
                 LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
                 auto lambda = [=]() {
-                    sendApiResponseUpdateRedisBulkQuadEvent(api, SAI_STATUS_SUCCESS, objectType, objectIds, strAttributes);
+                    sendApiResponseUpdateRedisBulkQuadEvent(api, SAI_STATUS_SUCCESS,(uint32_t)statuses.size(), objectType, objectIds, strAttributes);
                 };
                 sendStausAdvancedResponseSequence(sequenceNumber,lambda);
                 
@@ -1144,7 +1146,7 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
                 default:
                     LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion to Lambda {}", sequenceNumber);
                     auto lambda = [=]() {
-                        sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(api, SAI_STATUS_SUCCESS, objectType, objectIds, strAttributes);
+                        sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(api, SAI_STATUS_SUCCESS, (uint32_t)statuses.size(), objectType, objectIds, strAttributes);
                     };
                     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
                    
@@ -1975,7 +1977,7 @@ sai_status_t Syncd::processBulkEntry(
         {
             LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
             auto lambda = [=]() {
-                sendApiResponseUpdateRedisBulkQuadEvent(api, all, objectType, objectIds, strAttributes);
+                sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, objectIds, strAttributes);
             };
             sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2102,7 +2104,7 @@ sai_status_t Syncd::processBulkEntry(
     }
     LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisBulkQuadEvent(api, all, objectType, objectIds, strAttributes);
+        sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, objectIds, strAttributes);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
   
@@ -2341,7 +2343,7 @@ sai_status_t Syncd::processBulkOid(
         {
             LogToModuleFile("1", "1.add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
             auto lambda = [=]() {
-                sendApiResponseUpdateRedisBulkQuadEvent(api, all, objectType, objectIds, strAttributes);
+                sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, objectIds, strAttributes);
             };
             sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2396,7 +2398,7 @@ sai_status_t Syncd::processBulkOid(
     }
     LogToModuleFile("1", "2. add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisBulkQuadEvent(api, all, objectType, objectIds, strAttributes);
+        sendApiResponseUpdateRedisBulkQuadEvent(api, all,(uint32_t)objectIds.size(), objectType, objectIds, strAttributes);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
