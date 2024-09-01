@@ -413,8 +413,6 @@ void Syncd::processEvent(
         auto& key = kfvKey(kco);
         auto& op = kfvOp(kco);
         LogToModuleFile("1", "sequenceNumber: {} op: {} key: {}", sequenceNumber,op.c_str(), key.c_str());
-        LogToModuleFile("2", "sequenceNumber: {} op: {} key: {}", sequenceNumber,op.c_str(), key.c_str());
-
 
         if (ringBuffer) {
 			LogToModuleFile("1", "push processSingleEvent with sequenceNumber {} to ring buffer {} ",sequenceNumber, getNameByRingBuffer(ringBuffer));
@@ -748,7 +746,6 @@ void Syncd::processFdbFlushResponse(
         _In_ std::vector<swss::FieldValueTuple> values,
         _In_ sai_object_id_t switchVid)
 {
-    sendStatusAndEntryResponse(status, REDIS_ASIC_STATE_COMMAND_FLUSHRESPONSE, {});
 
     if (status == SAI_STATUS_SUCCESS)
     {
@@ -797,6 +794,8 @@ void Syncd::processFdbFlushResponse(
 
         m_client->processFlushEvent(switchVid, bridgePortId, bvId, type);
     }
+
+    sendStatusAndEntryResponse(status, REDIS_ASIC_STATE_COMMAND_FLUSHRESPONSE, {});
 }
 
 sai_status_t Syncd::processClearStatsEvent(
@@ -1022,25 +1021,15 @@ sai_status_t Syncd::processBulkQuadEvent(
     }
 }
 
-void Syncd::sendApiResponseUpdateRedisQuadEventCreate(
-        _In_ sai_common_api_t api,
-        _In_ sai_status_t status,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ int sequenceNumber)
-{
-    syncUpdateRedisQuadEvent(status, api, kco);
-    sendApiResponse(api, status);
-    
-}
-
 void Syncd::sendApiResponseUpdateRedisQuadEvent(
         _In_ sai_common_api_t api,
         _In_ sai_status_t status,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
         _In_ int sequenceNumber)
 {
-    sendApiResponse(api, status);
     syncUpdateRedisQuadEvent(status, api, kco);
+    sendApiResponse(api, status);
+
 }
 
 void Syncd::sendGetResponseUpdateRedisQuadEvent(
@@ -1053,8 +1042,8 @@ void Syncd::sendGetResponseUpdateRedisQuadEvent(
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
         _In_ sai_common_api_t api)
 {
-    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
     syncUpdateRedisQuadEvent(status, api, kco);
+    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
 }
 
 void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
@@ -1068,11 +1057,9 @@ void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
 {
     SWSS_LOG_ENTER();
 
-    //std::vector<sai_status_t> statuses(objectIds.size());
+    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
     sendApiResponse(api, status, object_count, statuses.data());
-
-    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 }
 
 void Syncd::sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
@@ -1086,10 +1073,6 @@ void Syncd::sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
 {
     SWSS_LOG_ENTER();
 
-    //std::vector<sai_status_t> statuses(objectIds.size());
-
-    sendApiResponse(api, status, object_count, statuses.data());
-
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
     for (auto& str: objectIds)
@@ -1101,6 +1084,8 @@ void Syncd::sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
 
         m_createdInInitView.insert(objectVid);
     }
+
+    sendApiResponse(api, status, object_count, statuses.data());
 }
 
 sai_status_t Syncd::processBulkQuadEventInInitViewMode(
@@ -2501,9 +2486,9 @@ sai_status_t Syncd::processQuadInInitViewModeCreate(
             m_createdInInitView.insert(objectVid);
         }
     }
-    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEventCreate to Lambda {}", sequenceNumber);
+    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisQuadEventCreate(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
+        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -3335,9 +3320,9 @@ sai_status_t Syncd::processQuadEvent(
     }
     else // non GET api, status is SUCCESS
     {
-        LogToModuleFile("1", "2. add sendApiResponseUpdateRedisQuadEventCreate to Lambda sequenceNumber {}", sequenceNumber);
+        LogToModuleFile("1", "2. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
         auto lambda = [=]() {
-            sendApiResponseUpdateRedisQuadEventCreate(api, status, kco, sequenceNumber);
+            sendApiResponseUpdateRedisQuadEvent(api, status, kco, sequenceNumber);
     	};
     	sendStausAdvancedResponseSequence(sequenceNumber,lambda); 
     }
@@ -5499,13 +5484,6 @@ void Syncd::getApiRingBuffer(
         }
     }
 
-    sai_object_type_t objectType1 = SAI_OBJECT_TYPE_NULL;
-    getObjectTypeByOperation(kco, objectType1);
-    if(objectType1 == SAI_OBJECT_TYPE_WRED) { // valid object type
-        ringBuffer = nullptr; 
-        found = true;
-    }
-
     if (!found) {
         LogToModuleFile("1", "didn't match ring buffer to api");
     }
@@ -5840,7 +5818,6 @@ void Syncd::sendStatusAndEntryResponse(
     std::string strStatus = sai_serialize_status(status);
 
     LogToModuleFile("1", "sending response: {} with commandType: {}", strStatus.c_str(), commandType.c_str());
-    LogToModuleFile("2", "sending response: {} with commandType: {}", strStatus.c_str(), commandType.c_str());
     SWSS_LOG_INFO("sending response: %s with commandType: %s", strStatus.c_str(), commandType.c_str());
 
     m_selectableChannel->set(strStatus, entry, commandType);

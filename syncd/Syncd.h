@@ -384,11 +384,6 @@ namespace syncd
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ int sequenceNumber);
 
-             void sendApiResponseUpdateRedisQuadEventCreate(
-                    _In_ sai_common_api_t api,
-                    _In_ sai_status_t status,
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int sequenceNumber);  
 
              void sendGetResponseUpdateRedisQuadEvent(
                     _In_ sai_object_type_t objectType,
@@ -745,7 +740,7 @@ namespace syncd
                 // make sure all object types are accounted for
                 //if(saiObjectTypes.size() != (SAI_OBJECT_TYPE_MAX+1))
                 //        return SAI_STATUS_FAILURE;
-#if 0 
+#if 1 
                 std::set<std::string> miscOperations = {
                         //REDIS_ASIC_STATE_COMMAND_NOTIFY,  // Not included in the list (flow without ringbuff)
                         REDIS_ASIC_STATE_COMMAND_GET_STATS,
@@ -853,7 +848,7 @@ namespace syncd
                         {"crud1", {crudOperations1, crudRingBuffer1}},
                         {"crud2", {crudOperations2, crudRingBuffer2}},
                         {"misc", {miscOperations, miscRingBuffer}},
-                }
+                };
  #endif
  #if 0
                 std::array<int, 59> crudOperations1Enums = {
@@ -943,7 +938,7 @@ namespace syncd
                 };
 #endif
 
-#if 1
+#if 0
 
                 std::set<std::string> crudOperations1 = {
                         REDIS_ASIC_STATE_COMMAND_NOTIFY,
