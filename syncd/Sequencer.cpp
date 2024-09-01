@@ -11,12 +11,14 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
     SequenceStatus status = FAILURE;
  
     logMsg = "multithreaded: Checking for ready responses in queue... \n";
+    LogToModuleFile("1", "Checking for ready responses in queue...");
 
     while (true) {
         // Check if the next sequence number is in the map
         auto seq_data = responses.find(next_seq_to_send);
         if (seq_data == responses.end()) {
             logMsg += "multithreaded: No next sequence found in queue \n";
+            LogToModuleFile("1", "No next sequence found in queue");
             status = SUCCESS;
             break;  // Exit loop if the next sequence is not in the map
         }
@@ -24,12 +26,15 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
         // Execute the stored lambda
         auto func = seq_data->second;
         if(func) {
-            func();  
+            LogToModuleFile("1", "before execute lambda with sequenceNumber: {}", next_seq_to_send);
+            func();
+            LogToModuleFile("1", "after execute lambda with sequenceNumber: {}", next_seq_to_send);
             logMsg += "multithreaded: Executing lambda with seq: " + std::to_string(next_seq_to_send) + " \n";
             status = NULL_PTR;
         }
         else {
             logMsg += "multithreaded: response lambda is null \n";
+             LogToModuleFile("1", "multithreaded: response lambda is null {}", next_seq_to_send);
             num_of_null_functions++;
             status = SUCCESS; //?????
         }
@@ -51,7 +56,7 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
         }
     }
 
-    LogToModuleFile("1", logMsg);
+    //LogToModuleFile("1", logMsg);
     return status;
 }
 
@@ -101,13 +106,19 @@ Sequencer::SequenceStatus Sequencer::executeFuncInSequence(int seq, std::functio
    std::string logMsg;
    SequenceStatus status = FAILURE;
     
+   LogToModuleFile("1", "Enter executeFuncInSequence with seq: {}", seq);     
+
     if (seq == next_seq_to_send) {
         // If the received sequence is the next one to send, execute it immediately
         logMsg = "multithreaded: executing reseponse lambda, seq num: " + std::to_string(seq) + " \n";
         
         // execute response lambda
         if(response_lambda) {
+
+            LogToModuleFile("1", "start execute response_lambda with sequenceNumber: {}", next_seq_to_send);
+
             response_lambda();
+            LogToModuleFile("1", "end execute response_lambda with sequenceNumber: {}", next_seq_to_send);
             logMsg += "multithreaded: execute response lambda \n";
             status = SUCCESS;
         }
@@ -130,7 +141,9 @@ Sequencer::SequenceStatus Sequencer::executeFuncInSequence(int seq, std::functio
         }
 
         // Continue sending any subsequent responses that are ready
+        LogToModuleFile("1", "start execute executeReadyResponses");
         status = executeReadyResponses();
+        LogToModuleFile("1", "end execute executeReadyResponses");
     } else {
         // If the sequence is not the next to send, store it in the map
         responses[seq] = response_lambda;
@@ -139,7 +152,7 @@ Sequencer::SequenceStatus Sequencer::executeFuncInSequence(int seq, std::functio
         num_of_out_of_sequence_functions++;
     }
     
-    LogToModuleFile("1", logMsg);
+    //LogToModuleFile("1", logMsg);
     return status;
 }
 

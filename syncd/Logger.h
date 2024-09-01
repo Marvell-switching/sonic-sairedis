@@ -15,7 +15,7 @@
 #include "fmt/format.h"
 #include <ctime>
 
-#define MAX_LOG_SIZE    (50 * 1024) /* 50 KB */
+#define MAX_LOG_SIZE    (10 *50 * 1024) /* 50 KB */
 #define ENABLE_LOGGING  1
 
 // Define a mutex for thread safety
@@ -60,7 +60,7 @@ static void writeToLogFile(const std::string& funcName, const std::string& fileN
     std::string formatted_time = oss.str();
 
     // Write the timestamp, function name, and message to the log file
-    logFile << formatted_time << " " << funcName << ": " << message << std::endl;
+    logFile << formatted_time << " " << "V1" << funcName << ": " << message << std::endl;
 
     
     logFile.close();
@@ -69,8 +69,7 @@ static void writeToLogFile(const std::string& funcName, const std::string& fileN
 template<typename... Args>
 static void logFormattedMessage(const std::string& funcName, const std::string& fileNum, const std::string& format, Args... messageArgs) {
     std::ostringstream oss;
-    oss << funcName << ": ";
-    
+   
     std::string remainingFormat = format;
     
     // Helper function to process a single argument

@@ -345,7 +345,7 @@ namespace syncd
 
             void syncUpdateRedisBulkQuadEvent(
                     _In_ sai_common_api_t api,
-                    _In_ const std::vector<sai_status_t>& statuses,
+                    _In_ std::vector<sai_status_t> statuses,
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string>& objectIds,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
@@ -365,6 +365,7 @@ namespace syncd
                     _In_ sai_status_t status,
                     _In_ uint32_t object_count,
                     _In_ sai_object_type_t objectType,
+                    _In_ std::vector<sai_status_t> statuses,
                     _In_ const std::vector<std::string>& objectIds,
                     _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
 
@@ -373,13 +374,21 @@ namespace syncd
                     _In_ sai_status_t status,
                     _In_ uint32_t object_count,
                     _In_ sai_object_type_t objectType,
+                    _In_ std::vector<sai_status_t> statuses,
                     _In_ const std::vector<std::string>& objectIds,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)  ;    
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)  ;
+                    
              void sendApiResponseUpdateRedisQuadEvent(
                     _In_ sai_common_api_t api,
                     _In_ sai_status_t status,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ int sequenceNumber);
+
+             void sendApiResponseUpdateRedisQuadEventCreate(
+                    _In_ sai_common_api_t api,
+                    _In_ sai_status_t status,
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ int sequenceNumber);  
 
              void sendGetResponseUpdateRedisQuadEvent(
                     _In_ sai_object_type_t objectType,
@@ -649,6 +658,23 @@ namespace syncd
                         _In_ swss::KeyOpFieldsValuesTuple kco,
                         _Out_ sai_object_type_t &objectType);
 
+
+            bool findOperationGroup(
+                const std::string& valueStr,
+                SyncdRing*& ringBuffer
+            );
+
+            std::string getNameByRingBuffer(SyncdRing* ringBuffer) 
+            {
+                for (const auto& pair : operationGroups) {
+                        if (pair.second.ringBuffer == ringBuffer) {
+                                 return pair.first;
+                        }
+                }
+
+                return "Not_found"; // Return a default value if not found
+            }
+
                 // Declare saiObjectTypes as a member variable
             std::vector<SaiObjectType> saiObjectTypes = {                
                         {SAI_OBJECT_TYPE_NULL, "SAI_OBJECT_TYPE_NULL"},
@@ -719,7 +745,7 @@ namespace syncd
                 // make sure all object types are accounted for
                 //if(saiObjectTypes.size() != (SAI_OBJECT_TYPE_MAX+1))
                 //        return SAI_STATUS_FAILURE;
-
+#if 0 
                 std::set<std::string> miscOperations = {
                         //REDIS_ASIC_STATE_COMMAND_NOTIFY,  // Not included in the list (flow without ringbuff)
                         REDIS_ASIC_STATE_COMMAND_GET_STATS,
@@ -827,28 +853,130 @@ namespace syncd
                         {"crud1", {crudOperations1, crudRingBuffer1}},
                         {"crud2", {crudOperations2, crudRingBuffer2}},
                         {"misc", {miscOperations, miscRingBuffer}},
-                        // Add other groups here...
+                }
+ #endif
+ #if 0
+                std::array<int, 59> crudOperations1Enums = {
+                        SAI_OBJECT_TYPE_NULL,
+                        SAI_OBJECT_TYPE_PORT,
+                        SAI_OBJECT_TYPE_LAG,                        
+                        SAI_OBJECT_TYPE_ACL_TABLE,
+                        SAI_OBJECT_TYPE_ACL_ENTRY,
+                        SAI_OBJECT_TYPE_ACL_COUNTER,
+                        SAI_OBJECT_TYPE_ACL_RANGE,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_HOSTIF,
+                        SAI_OBJECT_TYPE_MIRROR_SESSION,
+                        SAI_OBJECT_TYPE_SAMPLEPACKET,
+                        SAI_OBJECT_TYPE_STP,
+                        SAI_OBJECT_TYPE_HOSTIF_TRAP_GROUP,
+                        SAI_OBJECT_TYPE_POLICER,
+                        SAI_OBJECT_TYPE_WRED,
+                        SAI_OBJECT_TYPE_QOS_MAP,
+                        SAI_OBJECT_TYPE_QUEUE,
+                        SAI_OBJECT_TYPE_SCHEDULER,
+                        SAI_OBJECT_TYPE_SCHEDULER_GROUP,
+                        SAI_OBJECT_TYPE_BUFFER_POOL,
+                        SAI_OBJECT_TYPE_BUFFER_PROFILE,
+                        SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP,
+                        SAI_OBJECT_TYPE_LAG_MEMBER,
+                        SAI_OBJECT_TYPE_HASH,
+                        SAI_OBJECT_TYPE_UDF,
+                        SAI_OBJECT_TYPE_UDF_MATCH,
+                        SAI_OBJECT_TYPE_UDF_GROUP,
+                        SAI_OBJECT_TYPE_FDB_ENTRY,
+                        //SAI_OBJECT_TYPE_SWITCH,  // Not included in the list (floow without ringbuff)
+                        SAI_OBJECT_TYPE_HOSTIF_TRAP,
+                        SAI_OBJECT_TYPE_HOSTIF_TABLE_ENTRY,
+                        SAI_OBJECT_TYPE_VLAN,
+                        SAI_OBJECT_TYPE_VLAN_MEMBER,
+                        SAI_OBJECT_TYPE_HOSTIF_PACKET,
+                        SAI_OBJECT_TYPE_FDB_FLUSH,
+                        SAI_OBJECT_TYPE_STP_PORT,                        
+                        SAI_OBJECT_TYPE_L2MC_GROUP,
+                        SAI_OBJECT_TYPE_L2MC_GROUP_MEMBER,                        
+                        SAI_OBJECT_TYPE_L2MC_ENTRY,                        
+                        SAI_OBJECT_TYPE_MCAST_FDB_ENTRY,
+                        SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                        SAI_OBJECT_TYPE_BRIDGE,
+                        SAI_OBJECT_TYPE_BRIDGE_PORT,
+                        SAI_OBJECT_TYPE_VIRTUAL_ROUTER,
+                        SAI_OBJECT_TYPE_NEXT_HOP,
+                        SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                        SAI_OBJECT_TYPE_ROUTER_INTERFACE,  
+                        SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                        SAI_OBJECT_TYPE_ROUTE_ENTRY,
+                        SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_RPF_GROUP,
+                        SAI_OBJECT_TYPE_RPF_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_IPMC_GROUP,
+                        SAI_OBJECT_TYPE_IPMC_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_IPMC_ENTRY,
+                        SAI_OBJECT_TYPE_TUNNEL_MAP,
+                        SAI_OBJECT_TYPE_TUNNEL,
+                        SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
+                        SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY
                 };
 
-                return SAI_STATUS_SUCCESS;
-            }
-
-            bool findOperationGroup(
-                const std::string& valueStr,
-                SyncdRing*& ringBuffer
-            );
-
-            std::string getNameByRingBuffer(SyncdRing* ringBuffer) 
-            {
-                for (const auto& pair : operationGroups) {
-                        if (pair.second.ringBuffer == ringBuffer) {
-                        return pair.first;
+               // Populate crudOperations2 using the enums array
+                std::set<std::string> crudOperations1;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations1Enums.begin(), crudOperations1Enums.end(), item.enumValue) != crudOperations1Enums.end()) {
+                                crudOperations1.insert(item.enumString);
                         }
                 }
 
-                return "Not_found"; // Return a default value if not found
+                // Allocate new SyncdRing instances for each operation group
+                auto crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
+
+                // Map the operation groups
+                operationGroups = {
+			        	{"crud1", {crudOperations1, crudRingBuffer1}},
+                        // Add other groups here...
+                };
+#endif
+#if 0
+                // Map the operation groups
+                operationGroups = {
+                        // Add other groups here...
+                };
+#endif
+
+#if 1
+
+                std::set<std::string> crudOperations1 = {
+                        REDIS_ASIC_STATE_COMMAND_NOTIFY,
+                        REDIS_ASIC_STATE_COMMAND_GET_STATS,
+                        REDIS_ASIC_STATE_COMMAND_CLEAR_STATS,
+                        REDIS_ASIC_STATE_COMMAND_FLUSH,
+                        REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_QUERY,
+                        REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_QUERY,
+                        REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY,
+                        REDIS_FLEX_COUNTER_COMMAND_START_POLL,
+                        REDIS_FLEX_COUNTER_COMMAND_STOP_POLL,
+                        REDIS_FLEX_COUNTER_COMMAND_SET_GROUP,
+                        REDIS_FLEX_COUNTER_COMMAND_DEL_GROUP,
+                        REDIS_ASIC_STATE_COMMAND_CREATE,
+                        REDIS_ASIC_STATE_COMMAND_REMOVE,
+                        REDIS_ASIC_STATE_COMMAND_SET,
+                        REDIS_ASIC_STATE_COMMAND_GET,
+                        REDIS_ASIC_STATE_COMMAND_BULK_CREATE,
+                        REDIS_ASIC_STATE_COMMAND_BULK_REMOVE,
+                        REDIS_ASIC_STATE_COMMAND_BULK_SET
+                };
+              
+
+              // Allocate new SyncdRing instances for each operation group
+                auto crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
+
+                // Map the operation groups
+                operationGroups = {
+			{"crud1", {crudOperations1, crudRingBuffer1}},
+                        // Add other groups here...
+                };
+ #endif               
+                return SAI_STATUS_SUCCESS;
             }
-
-
         };
 }
