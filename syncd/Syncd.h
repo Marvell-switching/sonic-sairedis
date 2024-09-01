@@ -576,7 +576,7 @@ namespace syncd
 
             std::shared_ptr<RedisClient> m_client;
 
-            std::shared_ptr<syncd::Sequencer> m_sequencer;
+            std::shared_ptr<sequencer::Sequencer> m_sequencer;
 
             std::shared_ptr<NotificationHandler> m_handler;
 

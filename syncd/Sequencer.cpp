@@ -1,7 +1,7 @@
 #include "Sequencer.h"
 #include "swss/logger.h"
 
-using namespace syncd;
+using namespace sequencer;
 
 // Helper function to execute all ready responses in order
 // check how many consecutive responses were executed in sucession and log it
@@ -11,7 +11,7 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
  
     LogToModuleFile("1", "Checking for ready responses in queue...");
 
-    while (true) {
+    while (!sequencer_exited) {
         // Check if the next sequence number is in the map
         auto seq_data = responses.find(next_seq_to_send);
         if (seq_data == responses.end()) {
@@ -26,16 +26,17 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
             LogToModuleFile("1", "before execute lambda with sequenceNumber: {}", next_seq_to_send);
             func();
             LogToModuleFile("1", "after execute lambda with sequenceNumber: {}", next_seq_to_send);
-            status = NULL_PTR;
+            status = SUCCESS;
         }
         else {
             LogToModuleFile("1", "multithreaded: response lambda is null {}", next_seq_to_send);
             num_of_null_functions++;
-            status = SUCCESS; //?????
+            status = NULL_PTR;
         }
         
         // Increment the number of executed tasks in sequence
-        max_num_of_executed_tasks_in_sequence++; 
+        total_num_of_executed_tasks_in_sequence++; 
+        current_num_of_executed_tasks_in_sequence++;
 
         // Safely erase the entry
         responses.erase(seq_data);  
@@ -55,20 +56,13 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
 }
 
 // Get sequence number
-// if sequencer is full, reset the sequence number to avoid overflow
-// wait for, throw full failure
-// return if there is an issue or success (0-succss, 1-failure)
-// add private param to see how many lambdas are stored, 
-// for each function, return a status code
-// mux on everything
-Sequencer::SequenceStatus Sequencer::allocateSequenceNumber(int *seq_num) {
+// if sequencer is full, wait
+bool Sequencer::allocateSequenceNumber(int *seq_num) {
     std::unique_lock<std::mutex> lock(mtx);
-    SequenceStatus status = FAILURE;
-    
-    if(isFull()) {
+   
+    while(isFull()) {
         LogToModuleFile("1", "Sequencer is full, cannot allocate sequence number {}", current_seq);
-        *seq_num = INVALID_SEQUENCE_NUMBER;
-        return BUFFER_OVERFLOW;
+        //TODO: add sleep, and timeout error after X seconds
     }
 
     // update recieved param
@@ -84,18 +78,18 @@ Sequencer::SequenceStatus Sequencer::allocateSequenceNumber(int *seq_num) {
         current_seq = 0;
     }
 
-    status = SUCCESS;
-
-    return status;
+    return true;
 }
 
 // Add/Execute sequence function
-Sequencer::SequenceStatus Sequencer::executeFuncInSequence(int seq, std::function<void()> response_lambda) {
+bool Sequencer::executeFuncInSequence(int seq, std::function<void()> response_lambda) {
    
    std::unique_lock<std::mutex> lock(mtx);
+   // internal status
    SequenceStatus status = FAILURE;
     
-   LogToModuleFile("1", "Enter executeFuncInSequence with seq: {}", seq);     
+   LogToModuleFile("1", "Enter executeFuncInSequence with seq: {}", seq);
+   current_num_of_executed_tasks_in_sequence = 0;
 
     if (seq == next_seq_to_send) {
         // If the received sequence is the next one to send, execute it immediately
@@ -114,7 +108,8 @@ Sequencer::SequenceStatus Sequencer::executeFuncInSequence(int seq, std::functio
         }
 
         // increment the number of executed tasks in sequence
-        max_num_of_executed_tasks_in_sequence++;
+        total_num_of_executed_tasks_in_sequence++;
+        current_num_of_executed_tasks_in_sequence++;
 
         // Increment the next sequence to send
         ++next_seq_to_send;
@@ -127,7 +122,7 @@ Sequencer::SequenceStatus Sequencer::executeFuncInSequence(int seq, std::functio
 
         // Continue sending any subsequent responses that are ready
         LogToModuleFile("1", "start execute executeReadyResponses");
-        status = executeReadyResponses();
+        executeReadyResponses();
         LogToModuleFile("1", "end execute executeReadyResponses");
     } else {
         // If the sequence is not the next to send, store it in the map
@@ -137,26 +132,33 @@ Sequencer::SequenceStatus Sequencer::executeFuncInSequence(int seq, std::functio
         num_of_out_of_sequence_functions++;
     }
     
-    return status;
+    if(current_num_of_executed_tasks_in_sequence > max_num_of_executed_tasks_in_sequence) {
+        max_num_of_executed_tasks_in_sequence = current_num_of_executed_tasks_in_sequence;
+    }
+
+    if(status == SUCCESS)
+        return true;
+    else
+        return false;
 }
 
 Sequencer::SequenceStatus Sequencer::showStatistics() {
     std::unique_lock<std::mutex> lock(mtx);
     std::string logMsg = "STATISTICS: \n";
-    logMsg = "multithreaded: max number of executed tasks in sequence: " + std::to_string(max_num_of_executed_tasks_in_sequence) + " \n";
+    logMsg = "multithreaded: total number of executed tasks in sequence: " + std::to_string(total_num_of_executed_tasks_in_sequence) + " \n";
     logMsg += "multithreaded: number of null functions: " + std::to_string(num_of_null_functions) + " \n";
     logMsg += "multithreaded: number of out of sequence functions: " + std::to_string(num_of_out_of_sequence_functions) + " \n";
     logMsg += std::to_string(current_seq) + " out of " + std::to_string(max_seq_num) + "used";
-    LogToModuleFile("1", logMsg);
+    LogToModuleFile("2", logMsg);
     return SUCCESS;
 }
 
 Sequencer::SequenceStatus Sequencer::clearStatistics() {
     std::unique_lock<std::mutex> lock(mtx);
-    max_num_of_executed_tasks_in_sequence = 0;
+    total_num_of_executed_tasks_in_sequence = 0;
     num_of_null_functions = 0;
     num_of_out_of_sequence_functions = 0;
-    LogToModuleFile("1", "CLEANED STATISTICS \n");
+    LogToModuleFile("2", "CLEANED STATISTICS \n");
     return SUCCESS;
 }
 

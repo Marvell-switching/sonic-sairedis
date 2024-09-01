@@ -946,7 +946,6 @@ void SaiPlayer::update_notifications_pointers(
      * need to override them after create, and after set.
      */
 
-    SWSS_LOG_NOTICE("sai_metadata_update_attribute_notification_pointers from SaiPlayer::update_notifications_pointers");
     sai_metadata_update_attribute_notification_pointers(&m_switchNotifications, attr_count, attr_list);
 }
 

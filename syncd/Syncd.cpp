@@ -149,7 +149,7 @@ Syncd::Syncd(
     }
 
     m_client = std::make_shared<RedisClient>(m_dbAsic);
-    m_sequencer = std::make_shared<Sequencer>();
+    m_sequencer = std::make_shared<sequencer::Sequencer>();
 
     m_processor = std::make_shared<NotificationProcessor>(m_notifications, m_client, std::bind(&Syncd::syncProcessNotification, this, _1));
     m_handler = std::make_shared<NotificationHandler>(m_processor);
@@ -242,28 +242,21 @@ void Syncd::popRingBuffer(SyncdRing* ringBuffer)
 	}
     SWSS_LOG_ENTER();
     ringBuffer->Started = true;
-    //SWSS_LOG_NOTICE("multithreaded: Syncd starts the popRingBuffer thread!");
     
     while (!ring_thread_exited)
     {
-        //SWSS_LOG_NOTICE("multithreaded: wait popRingBuffer thread!");
-        LogToModuleFile(getNameByRingBuffer(ringBuffer), "multithreaded: wait popRingBuffer thread!");
+        LogToModuleFile(getNameByRingBuffer(ringBuffer), "wait popRingBuffer thread!");
         std::unique_lock<std::mutex> lock(ringBuffer->mtx);
         ringBuffer->cv.wait(lock, [&](){ return !ringBuffer->IsEmpty(); });
-        //SWSS_LOG_NOTICE("multithreaded: Stop waiting");
-        LogToModuleFile(getNameByRingBuffer(ringBuffer), "multithreaded: Stop waiting");
+        LogToModuleFile(getNameByRingBuffer(ringBuffer), "Stop waiting");
         ringBuffer->Idle = false;
         AnyTask func;
          while (ringBuffer->pop(func)) {
-            LogToModuleFile(getNameByRingBuffer(ringBuffer), "multithreaded: try to execute func");
-            //SWSS_LOG_NOTICE("multithreaded: try to execute func");
+            LogToModuleFile(getNameByRingBuffer(ringBuffer), "try to execute func");
             func();
-            LogToModuleFile(getNameByRingBuffer(ringBuffer), "multithreaded: Execute func successful");
-            //SWSS_LOG_NOTICE("multithreaded: Execute func successful");
+            LogToModuleFile(getNameByRingBuffer(ringBuffer), "Execute func successful");
         }
-        LogToModuleFile(getNameByRingBuffer(ringBuffer), "multithreaded: no more functions to execute");
-        //SWSS_LOG_NOTICE("multithreaded: no more functions to execute");
-        // lock.unlock();
+        LogToModuleFile(getNameByRingBuffer(ringBuffer), "no more functions to execute");
         ringBuffer->doTask();
         ringBuffer->Idle = true;
     }
@@ -379,7 +372,7 @@ void Syncd::processEvent(
 {
     SWSS_LOG_ENTER();
     static int entries = 0;
-    LogToModuleFile("1", "multithreaded: !!!processEvent, ITERATION: {} !!!", std::to_string(entries++));
+    LogToModuleFile("1", "!!!processEvent, ITERATION: {} !!!", std::to_string(entries++));
 
     std::lock_guard<std::mutex> lock(m_mutex);
     LogToModuleFile("1", "after lock");
@@ -401,9 +394,9 @@ void Syncd::processEvent(
         LogToModuleFile("1","getApiRingBuffer end");
 
         int sequenceNumber;
-        if(int seq_status = m_sequencer->allocateSequenceNumber(&sequenceNumber) != Sequencer::SUCCESS)
+        if(!m_sequencer->allocateSequenceNumber(&sequenceNumber))
         {
-            LogToModuleFile("1", "Failed to allocate sequence number: {}", std::to_string(seq_status));
+            LogToModuleFile("1", "Failed to allocate sequence number");
             //todo: handle wait until sequence number is available with timeout 
         }
         else {
@@ -440,8 +433,7 @@ sai_status_t Syncd::processSingleEvent(
     auto& key = kfvKey(kco);
     auto& op = kfvOp(kco);
 
-    //SWSS_LOG_NOTICE("multithreaded: key: %s op: %s, sequence number: %d", key.c_str(), op.c_str(), sequenceNumber);
-    LogToModuleFile("1","multithreaded: key: {} op: {} {}", key, op, std::to_string(sequenceNumber));
+    LogToModuleFile("1","key: {} op: {} {}", key, op, std::to_string(sequenceNumber));
 
     if (key.length() == 0)
     {
@@ -933,7 +925,7 @@ sai_status_t Syncd::processBulkQuadEvent(
         _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_INFO("multithreaded: seq=%d, api=%s, key=%s, op=%s", sequenceNumber, sai_serialize_common_api(api).c_str(), kfvKey(kco).c_str(), kfvOp(kco).c_str());
+    SWSS_LOG_INFO("seq=%d, api=%s, key=%s, op=%s", sequenceNumber, sai_serialize_common_api(api).c_str(), kfvKey(kco).c_str(), kfvOp(kco).c_str());
 
     const std::string& key = kfvKey(kco); // objectType:count
 
@@ -2115,23 +2107,18 @@ sai_status_t Syncd::processEntry(
     switch (api)
     {
         case SAI_COMMON_API_CREATE:
-            //SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_CREATE");
             return m_vendorSai->create(metaKey, SAI_NULL_OBJECT_ID, attr_count, attr_list);
 
         case SAI_COMMON_API_REMOVE:
-            //SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_REMOVE");
             return m_vendorSai->remove(metaKey);
 
         case SAI_COMMON_API_SET:
-            //SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_SET");
             return m_vendorSai->set(metaKey, attr_list);
 
         case SAI_COMMON_API_GET:
-            //SWSS_LOG_NOTICE("multithreaded: processEntry SAI_COMMON_API_GET");
             return m_vendorSai->get(metaKey, attr_count, attr_list);
 
         default:
-            //SWSS_LOG_NOTICE("multithreaded: api %s not supported", sai_serialize_common_api(api).c_str());
             SWSS_LOG_THROW("api %s not supported", sai_serialize_common_api(api).c_str());
     }
 }
@@ -2715,15 +2702,12 @@ void Syncd::sendApiResponse(
             break;
 
         default:
-            //SWSS_LOG_NOTICE("multithreaded: api %s not supported by this function", sai_serialize_common_api(api).c_str());
             SWSS_LOG_THROW("api %s not supported by this function",
                     sai_serialize_common_api(api).c_str());
     }
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        //SWSS_LOG_NOTICE("multithreaded: api %s failed in syncd mode: %s", sai_serialize_common_api(api).c_str(), sai_serialize_status(status).c_str());
-
         SWSS_LOG_ERROR("api %s failed in syncd mode: %s",
                     sai_serialize_common_api(api).c_str(),
                     sai_serialize_status(status).c_str());
@@ -2740,8 +2724,6 @@ void Syncd::sendApiResponse(
 
     std::string strStatus = sai_serialize_status(status);
 
-    //SWSS_LOG_NOTICE("multithreaded: sending response for %s api with status: %s",sai_serialize_common_api(api).c_str(),strStatus.c_str());
-
     SWSS_LOG_INFO("sending response for %s api with status: %s",
             sai_serialize_common_api(api).c_str(),
             strStatus.c_str());
@@ -2750,9 +2732,6 @@ void Syncd::sendApiResponse(
 
     SWSS_LOG_INFO("response for %s api was send",
             sai_serialize_common_api(api).c_str());
-
-    //SWSS_LOG_NOTICE("multithreaded: response for %s api was send",sai_serialize_common_api(api).c_str());
-
 }
 
 void Syncd::processFlexCounterGroupEvent( // TODO must be moved to go via ASIC channel queue
@@ -3124,20 +3103,13 @@ void Syncd::pushRingBuffer(SyncdRing* ringBuffer, AnyTask&& func)
     SWSS_LOG_ENTER();
     if (!ringBuffer || !ringBuffer->Started) 
     {
-        //SWSS_LOG_NOTICE("multithreaded: pushRingBuffer: gRingBuffer is not started");
         LogToModuleFile("1", "execute fun since ringBuffer not valid or not started");
         func();
-    // } else if (!gRingBuffer->Serves(getName())) {
-    //     while (!gRingBuffer->IsEmpty() || !gRingBuffer->Idle) {
-    //         std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MSECONDS));
-    //     }
-    //     func();
     } else {
         while (!ringBuffer->push(func)) {
             SWSS_LOG_WARN("fail to push..ring is full...");
         }
-        //SWSS_LOG_NOTICE("multithreaded: pushRingBuffer: notify_one");
-        LogToModuleFile("1", "multithreaded: pushRingBuffer: notify_one");
+        LogToModuleFile("1", "pushRingBuffer: notify_one");
         ringBuffer->cv.notify_one();
     }
 }
@@ -3148,7 +3120,6 @@ sai_status_t Syncd::processQuadEvent(
         _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
-    //SWSS_LOG_NOTICE("multithreaded: %d, api=%s, key=%s, op=%s", sequenceNumber, sai_serialize_common_api(api).c_str(), kfvKey(kco).c_str(), kfvOp(kco).c_str());
     LogToModuleFile("1", "{} api={}, key={}, op={}",  std::to_string(sequenceNumber), sai_serialize_common_api(api), kfvKey(kco), kfvOp(kco));
 
     const std::string& key = kfvKey(kco);
@@ -3198,16 +3169,12 @@ sai_status_t Syncd::processQuadEvent(
          * TODO: must be done per switch, and switch may not exists yet
          */
 
-        //SWSS_LOG_NOTICE("multithreaded: updateNotificationsPointers");
         m_handler->updateNotificationsPointers(attr_count, attr_list);
-        //SWSS_LOG_NOTICE("multithreaded: finish updateNotificationsPointers");
     }
 
     if (isInitViewMode())
     {
         sai_status_t status = processQuadEventInInitViewMode(metaKey.objecttype, strObjectId, api, attr_count, attr_list, kco, sequenceNumber);
-
-        //SWSS_LOG_NOTICE("multithreaded: isInitViewMode()");
 
         return status;
     }
@@ -3221,16 +3188,11 @@ sai_status_t Syncd::processQuadEvent(
          */
 
         SWSS_LOG_DEBUG("translating VID to RIDs on all attributes");
-        //SWSS_LOG_NOTICE("multithreaded: translateVidToRid");
 
         m_translator->translateVidToRid(metaKey.objecttype, attr_count, attr_list);
-
-        //SWSS_LOG_NOTICE("multithreaded: success translateVidToRid");
     }
 
-    //SWSS_LOG_NOTICE("multithreaded: sai_metadata_get_object_type_info ");
     auto info = sai_metadata_get_object_type_info(metaKey.objecttype);
-    //SWSS_LOG_NOTICE("multithreaded: sai_metadata_get_object_type_info success");
 
     sai_status_t status;
 
@@ -3258,14 +3220,10 @@ sai_status_t Syncd::processQuadEvent(
         status = processOid(metaKey.objecttype, strObjectId, api, attr_count, attr_list);
     }
 
-    //SWSS_LOG_NOTICE("multithreaded: status %d", status);
-
     if (api == SAI_COMMON_API_GET)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
-            //SWSS_LOG_NOTICE("multithreaded: get API for key: %s op: %s returned status: %s",key.c_str(),op.c_str(),sai_serialize_status(status).c_str());
-
             SWSS_LOG_INFO("get API for key: %s op: %s returned status: %s",
                     key.c_str(),
                     op.c_str(),
@@ -3275,7 +3233,6 @@ sai_status_t Syncd::processQuadEvent(
         // extract switch VID from any object type
 
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
-        //SWSS_LOG_NOTICE("multithreaded: SAI_COMMON_API_GET");
         LogToModuleFile("1", "add sendGetResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
         auto lambda = [=]() {
             sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list, kco, api);
@@ -3359,28 +3316,21 @@ sai_status_t Syncd::processOid(
         SWSS_LOG_THROW("passing non object id %s as generic object", info->objecttypename);
     }
 
-    //SWSS_LOG_NOTICE("multithreaded: processOid %d", api);
-
     switch (api)
     {
         case SAI_COMMON_API_CREATE:
-            //SWSS_LOG_NOTICE("multithreaded: processOid SAI_COMMON_API_CREATE");
             return processOidCreate(objectType, strObjectId, attr_count, attr_list);
 
         case SAI_COMMON_API_REMOVE:
-            //SWSS_LOG_NOTICE("multithreaded: processOid SAI_COMMON_API_REMOVE");
             return processOidRemove(objectType, strObjectId);
 
         case SAI_COMMON_API_SET:
-            //SWSS_LOG_NOTICE("multithreaded: processOid SAI_COMMON_API_SET");
             return processOidSet(objectType, strObjectId, attr_list);
 
         case SAI_COMMON_API_GET:
-            //SWSS_LOG_NOTICE("multithreaded: processOid SAI_COMMON_API_GET");
             return processOidGet(objectType, strObjectId, attr_count, attr_list);
 
         default:
-            //SWSS_LOG_NOTICE("multithreaded: common api (%s) is not implemented", sai_serialize_common_api(api).c_str());
             SWSS_LOG_THROW("common api (%s) is not implemented", sai_serialize_common_api(api).c_str());
     }
 }
@@ -3392,7 +3342,6 @@ sai_status_t Syncd::processOidCreate(
         _In_ sai_attribute_t *attr_list)
 {
     SWSS_LOG_ENTER();
-    //SWSS_LOG_NOTICE("multithreaded: processOidCreate");
 
     sai_object_id_t objectVid;
     sai_deserialize_object_id(strObjectId, objectVid);
@@ -3422,9 +3371,7 @@ sai_status_t Syncd::processOidCreate(
 
     sai_object_id_t objectRid;
 
-    //SWSS_LOG_NOTICE("multithreaded: processOidCreate try to m_vendorSai->create");
     status = m_vendorSai->create(objectType, &objectRid, switchRid, attr_count, attr_list);
-    //SWSS_LOG_NOTICE("multithreaded: processOidCreate m_vendorSai->create success");
 
     if (status == SAI_STATUS_SUCCESS)
     {
@@ -3432,8 +3379,6 @@ sai_status_t Syncd::processOidCreate(
          * Object was created so new object id was generated we need to save
          * virtual id's to redis db.
          */
-
-        //SWSS_LOG_NOTICE("multithreaded: m_vendorSai->create success");
 
         m_translator->insertRidAndVid(objectRid, objectVid);
 
@@ -3448,8 +3393,6 @@ sai_status_t Syncd::processOidCreate(
              * constructor, like getting all queues, ports, etc.
              */
 
-            //SWSS_LOG_NOTICE("multithreaded: object type switch");
-
             m_switches[switchVid] = std::make_shared<SaiSwitch>(switchVid, objectRid, m_client, m_translator, m_vendorSai);
 
             m_mdioIpcServer->setSwitchId(objectRid);
@@ -3463,7 +3406,6 @@ sai_status_t Syncd::processOidCreate(
         }
     }
 
-    //SWSS_LOG_NOTICE("multithreaded: processOidCreate status %d", status);
     return status;
 }
 
@@ -3471,7 +3413,6 @@ sai_status_t Syncd::processOidRemove(
         _In_ sai_object_type_t objectType,
         _In_ const std::string &strObjectId)
 {
-    //SWSS_LOG_NOTICE("multithreaded: processOidRemove");
     SWSS_LOG_ENTER();
 
     sai_object_id_t objectVid;
@@ -3484,8 +3425,6 @@ sai_status_t Syncd::processOidRemove(
         sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
 
         m_switches.at(switchVid)->collectPortRelatedObjects(rid);
-
-        //SWSS_LOG_NOTICE("multithreaded: processOidRemove SAI_OBJECT_TYPE_PORT");
     }
 
     sai_status_t status = m_vendorSai->remove(objectType, rid);
@@ -3536,30 +3475,29 @@ sai_status_t Syncd::processOidRemove(
 
             sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
 
-            LogToModuleFile("1", "multithreaded: processOidRemove start removing...");
+            LogToModuleFile("1", "processOidRemove start removing...");
             if (m_switches.at(switchVid)->isDiscoveredRid(rid))
             {
-                LogToModuleFile("1", "multithreaded: try removeExistingObjectReference");
+                LogToModuleFile("1", "try removeExistingObjectReference");
                 m_switches.at(switchVid)->removeExistingObjectReference(rid);
-                LogToModuleFile("1", "multithreaded: success removeExistingObjectReference");
+                LogToModuleFile("1", "success removeExistingObjectReference");
             }
 
-            LogToModuleFile("1", "multithreaded: processOidRemove removed isDiscoveredRid");
+            LogToModuleFile("1", "processOidRemove removed isDiscoveredRid");
 
             if (objectType == SAI_OBJECT_TYPE_PORT)
             {
-                LogToModuleFile("1", "multithreaded: try postPortRemove");
+                LogToModuleFile("1", "try postPortRemove");
                 m_switches.at(switchVid)->postPortRemove(rid);
-                LogToModuleFile("1", "multithreaded: success postPortRemove");
+                LogToModuleFile("1", "success postPortRemove");
             }
 
-            LogToModuleFile("1", "multithreaded: processOidRemove removed postPortRemove");
+            LogToModuleFile("1", "processOidRemove removed postPortRemove");
 
-            SWSS_LOG_NOTICE("multithreaded: processOidRemove finish removing");
+            SWSS_LOG_NOTICE("processOidRemove finish removing");
         }
     }
 
-    //SWSS_LOG_NOTICE("multithreaded: processOidRemove status %d", status);
     return status;
 }
 
@@ -3593,24 +3531,13 @@ sai_status_t Syncd::processOidGet(
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
     SWSS_LOG_ENTER();
-    //SWSS_LOG_NOTICE("multithreaded: processOidGet");
 
     sai_object_id_t objectVid;
     sai_deserialize_object_id(strObjectId, objectVid);
 
-    //SWSS_LOG_NOTICE("multithreaded: before m_translator->translateVidToRid(objectVid)");
     sai_object_id_t rid = m_translator->translateVidToRid(objectVid);
-    for(uint32_t i=0; i < attr_count; i++) {
-        //SWSS_LOG_NOTICE("multithreaded: after m_translator->translateVidToRid(objectVid), id %d, oid %d", attr_list[i].id, attr_list[i].value.oid);
-    }
 
-    if(attr_list[0].id == 8 && attr_list[0].value.oid == 8) {
-        //SWSS_LOG_NOTICE("multithreaded: TEST SKIP");
-    }
-    else {
-        status = m_vendorSai->get(objectType, rid, attr_count, attr_list);
-        //SWSS_LOG_NOTICE("multithreaded: sai status %d from vendor", status);
-    }
+    status = m_vendorSai->get(objectType, rid, attr_count, attr_list);
 
     return status;
 }
@@ -5542,7 +5469,7 @@ void Syncd::run()
         SWSS_LOG_NOTICE("starting main loop, ONLY restart query");
 
         if (m_commandLineOptions->m_disableExitSleep)
-            runMainLoop = true;
+            runMainLoop = false;
     }
 
     m_timerWatchdog.setCallback(timerWatchdogCallback);
@@ -5550,7 +5477,6 @@ void Syncd::run()
     while (runMainLoop)
     {
         // add sequence number to log messages
-        SWSS_LOG_NOTICE("! run main loop ");
         try
         {
             swss::Selectable *sel = NULL;
@@ -5652,9 +5578,9 @@ void Syncd::run()
             else if (sel == m_flexCounter.get())
             {
                 int sequenceNumber;
-                if(int seq_status = m_sequencer->allocateSequenceNumber(&sequenceNumber) != Sequencer::SUCCESS)
+                if(!!m_sequencer->allocateSequenceNumber(&sequenceNumber))
                 {
-                    LogToModuleFile("1", "Failed to allocate sequence number: {}", std::to_string(seq_status));
+                    LogToModuleFile("1", "Failed to allocate sequence number: {}", std::to_string(sequenceNumber));
                     //todo: handle wait until sequence number is available with timeout 
                 }
                 else {
@@ -5662,40 +5588,40 @@ void Syncd::run()
                 }
                 //directly to sequencer
                 auto lambda = [=](){
-                    LogToModuleFile("1", "multithreaded: inside lambda, start m_flexCounter");
+                    LogToModuleFile("1", "inside lambda, start m_flexCounter");
                     processFlexCounterEvent(*(swss::ConsumerTable*)sel);
-                    LogToModuleFile("1", "multithreaded: inside lambda, end m_flexCounter");
+                    LogToModuleFile("1", "inside lambda, end m_flexCounter");
                 };
 
-                if(int seq_status = m_sequencer->executeFuncInSequence(sequenceNumber, lambda) != Sequencer::SUCCESS)
+                if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambda))
                 {
-                    LogToModuleFile("1", "m_flexCounter failed to execute function in sequence, status: {}, sequence number: {}", std::to_string(seq_status), std::to_string(sequenceNumber));
+                    LogToModuleFile("1", "m_flexCounter failed to execute function in sequence, sequence number: {}", std::to_string(sequenceNumber));
                 }
             }
             else if (sel == m_flexCounterGroup.get())
             {
                 int sequenceNumber;
-                if(int seq_status = m_sequencer->allocateSequenceNumber(&sequenceNumber) != Sequencer::SUCCESS)
+                if(!!m_sequencer->allocateSequenceNumber(&sequenceNumber))
                 {
-                    LogToModuleFile("1", "Failed to allocate sequence number: {}", std::to_string(seq_status));
+                    LogToModuleFile("1", "Failed to allocate sequence number");
                     //todo: handle wait until sequence number is available with timeout 
                 }
                 else {
                     LogToModuleFile("1", "Allocated sequence number: ", std::to_string(sequenceNumber));
                 }
 
-				LogToModuleFile("1", "multithreaded: BEFORE PUSH INTO RING BUFFER sequence number: ",std::to_string(sequenceNumber));
+				LogToModuleFile("1", "BEFORE PUSH INTO RING BUFFER sequence number: ",std::to_string(sequenceNumber));
 				
                 //directly to sequencer
                 auto lambda = [=](){
-                    LogToModuleFile("1", "multithreaded: inside lambda, start m_flexCounterGroup");
+                    LogToModuleFile("1", "inside lambda, start m_flexCounterGroup");
                     processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
-                    LogToModuleFile("1", "multithreaded: inside lambda, end m_flexCounterGroup");
+                    LogToModuleFile("1", "inside lambda, end m_flexCounterGroup");
                 };
 
-                if(int seq_status = m_sequencer->executeFuncInSequence(sequenceNumber, lambda) != Sequencer::SUCCESS)
+                if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambda))
                 {
-                    LogToModuleFile("1", "m_flexCounterGroup failed to execute function in sequence, status: {}, sequence number: {}",  std::to_string(seq_status), std::to_string(sequenceNumber));
+                    LogToModuleFile("1", "m_flexCounterGroup failed to execute function in sequence, sequence number: {}",  std::to_string(sequenceNumber));
                 }
             }
             else if (sel == m_selectableChannel.get())
@@ -5822,29 +5748,24 @@ void Syncd::sendStatusAndEntryResponse(
 
     m_selectableChannel->set(strStatus, entry, commandType);
 }
-
 void Syncd::sendStausResponseSequence(
+
     _In_ sai_status_t status,
     _In_ const std::string& commandType,
     _In_ const std::vector<swss::FieldValueTuple>& entry,
     _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("multithreaded: sendStausResponseSequence");
-
-    //sequenceNumber = INVALID_SEQUENCE_NUMBER;
 
     if(sequenceNumber != INVALID_SEQUENCE_NUMBER) {
-        SWSS_LOG_NOTICE("multithreaded: valid sequence number %d", sequenceNumber);
-
         // If the response is to be sequenced, then add it to the sequencer
         LogToModuleFile("1", "add sendStatusAndEntryResponse to lambda with sequenceNumber {} ", sequenceNumber);
         auto lambda = [=]() {
             sendStatusAndEntryResponse(status, commandType, entry);
         };
-        if(int seq_status = m_sequencer->executeFuncInSequence(sequenceNumber, lambda) != Sequencer::SUCCESS)
+        if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambda))
         {
-            LogToModuleFile("1", "m_flexCounterGroup failed to execute function in sequence, status: {}, sequence number: {}", std::to_string(seq_status), std::to_string(sequenceNumber));
+            LogToModuleFile("1", "failed to execute function in sequence, sequence number: {}",std::to_string(sequenceNumber));
         }
     }
     else {
@@ -5859,14 +5780,12 @@ void Syncd::sendStausAdvancedResponseSequence(
         std::function<void()> lambdaFunc)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("multithreaded: sendStausAdvancedResponseSequence");
 
-    //sequenceNumber = INVALID_SEQUENCE_NUMBER;
     if(sequenceNumber != INVALID_SEQUENCE_NUMBER) {
-        SWSS_LOG_NOTICE("multithreaded: valid sequence number {}", sequenceNumber);
-        if(int seq_status = m_sequencer->executeFuncInSequence(sequenceNumber, lambdaFunc) != Sequencer::SUCCESS)
+        LogToModuleFile("1", "valid sequence number {}", sequenceNumber);
+        if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambdaFunc))
         {
-            LogToModuleFile("1", "m_flexCounterGroup failed to execute function in sequence, status: {}, sequence number:", std::to_string(seq_status), std::to_string(sequenceNumber));
+            LogToModuleFile("1", "failed to execute function in sequence, sequence number:", std::to_string(sequenceNumber));
         }
     }
     else {
