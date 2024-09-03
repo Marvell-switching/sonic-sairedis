@@ -438,7 +438,11 @@ sai_status_t Syncd::processSingleEvent(
     if (key.length() == 0)
     {
         SWSS_LOG_DEBUG("no elements in m_buffer");
-
+        LogToModuleFile("1", "add to lambda no elements in m_buffer sequenceNumber {}",sequenceNumber);
+        auto lambda = [=](){
+             LogToModuleFile("1", "no elements in m_buffer sequenceNumber {}",sequenceNumber);
+        };
+        m_sequencer->executeFuncInSequence(sequenceNumber, lambda);
         return SAI_STATUS_SUCCESS;
     }
 
