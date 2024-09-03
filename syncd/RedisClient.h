@@ -11,6 +11,7 @@ extern "C" {
 #include <set>
 #include <memory>
 #include <vector>
+#include <mutex>
 
 namespace syncd
 {
@@ -19,7 +20,7 @@ namespace syncd
         public:
 
             RedisClient(
-                    _In_ std::shared_ptr<swss::DBConnector> dbAsic);
+                    _In_ std::shared_ptr<swss::DBConnector> dbAsic, _In_ std::shared_ptr<std::mutex> t_mutex = nullptr);
 
             virtual ~RedisClient();
 
@@ -158,6 +159,8 @@ namespace syncd
                     _In_ sai_object_id_t bvId,
                     _In_ sai_fdb_flush_entry_type_t type);
 
+            swss::DBConnector *redis_get();
+
         private:
 
             std::map<sai_object_id_t, swss::TableDump> getAsicView(
@@ -180,6 +183,10 @@ namespace syncd
             std::shared_ptr<swss::DBConnector> m_dbAsic;
 
             std::string m_fdbFlushSha;
+
+            bool m_protected;
+
+            std::shared_ptr<std::mutex> m_mutex;
 
     };
 }

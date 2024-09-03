@@ -615,6 +615,7 @@ namespace syncd
              * * getting flex counter - here we skip using mutex
              */
             std::mutex m_mutex;
+            std::shared_ptr<std::mutex> m_redis_mutex;
 
             std::shared_ptr<swss::DBConnector> m_dbAsic;
 
@@ -740,7 +741,7 @@ namespace syncd
                 // make sure all object types are accounted for
                 //if(saiObjectTypes.size() != (SAI_OBJECT_TYPE_MAX+1))
                 //        return SAI_STATUS_FAILURE;
-#if 1 
+#if 0 
                 std::set<std::string> miscOperations = {
                         //REDIS_ASIC_STATE_COMMAND_NOTIFY,  // Not included in the list (flow without ringbuff)
                         REDIS_ASIC_STATE_COMMAND_GET_STATS,
@@ -938,7 +939,7 @@ namespace syncd
                 };
 #endif
 
-#if 0
+#if 1
 
                 std::set<std::string> crudOperations1 = {
                         REDIS_ASIC_STATE_COMMAND_NOTIFY,

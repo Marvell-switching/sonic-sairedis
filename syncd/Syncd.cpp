@@ -140,15 +140,18 @@ Syncd::Syncd(
 
         bool modifyRedis = m_enableSyncMode ? false : true;
 
+        m_redis_mutex = std::make_shared<std::mutex>();
+
         m_selectableChannel = std::make_shared<sairedis::RedisSelectableChannel>(
                 m_dbAsic,
                 ASIC_STATE_TABLE,
                 REDIS_TABLE_GETRESPONSE,
                 TEMP_PREFIX,
-                modifyRedis);
+                modifyRedis,
+                m_redis_mutex);
     }
 
-    m_client = std::make_shared<RedisClient>(m_dbAsic);
+    m_client = std::make_shared<RedisClient>(m_dbAsic, m_redis_mutex);
     m_sequencer = std::make_shared<sequencer::Sequencer>();
 
     m_processor = std::make_shared<NotificationProcessor>(m_notifications, m_client, std::bind(&Syncd::syncProcessNotification, this, _1));
@@ -167,7 +170,7 @@ Syncd::Syncd(
 
     m_handler->setSwitchNotifications(m_sn.getSwitchNotifications());
 
-    m_restartQuery = std::make_shared<swss::NotificationConsumer>(m_dbAsic.get(), SYNCD_NOTIFICATION_CHANNEL_RESTARTQUERY_PER_DB(m_contextConfig->m_dbAsic));
+    m_restartQuery = std::make_shared<swss::NotificationConsumer>(m_client->redis_get(), SYNCD_NOTIFICATION_CHANNEL_RESTARTQUERY_PER_DB(m_contextConfig->m_dbAsic));
 
     // TODO to be moved to ASIC_DB
     m_dbFlexCounter = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbFlex, 0);
