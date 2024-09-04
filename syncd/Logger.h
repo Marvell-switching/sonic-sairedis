@@ -14,6 +14,7 @@
 #include <iomanip>
 #include "fmt/format.h"
 #include <ctime>
+#include <thread>
 
 #define MAX_LOG_SIZE    (10 *50 * 1024) /* 50 KB */
 #define ENABLE_LOGGING  1
@@ -59,8 +60,10 @@ static void writeToLogFile(const std::string& funcName, const std::string& fileN
         << '.' << std::setw(3) << std::setfill('0') << milliseconds.count();
     std::string formatted_time = oss.str();
 
+    std::thread::id this_id = std::this_thread::get_id();
+
     // Write the timestamp, function name, and message to the log file
-    logFile << formatted_time << " " << "V1" << funcName << ": " << message << std::endl;
+    logFile << formatted_time << " V4 " << this_id << " " << funcName << ": " << message << std::endl;
 
     
     logFile.close();

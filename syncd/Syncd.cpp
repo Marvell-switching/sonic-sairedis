@@ -375,7 +375,8 @@ void Syncd::processEvent(
 {
     SWSS_LOG_ENTER();
     static int entries = 0;
-    LogToModuleFile("1", "!!!processEvent, ITERATION: {} !!!", std::to_string(entries++));
+
+    LogToModuleFile("1", "!!!processEvent, ITERATION: {} m_enableSyncMode {}!!!", entries++, m_enableSyncMode);
 
     std::lock_guard<std::mutex> lock(m_mutex);
     LogToModuleFile("1", "after lock");
@@ -403,7 +404,7 @@ void Syncd::processEvent(
             //todo: handle wait until sequence number is available with timeout 
         }
         else {
-            LogToModuleFile("1", "Allocated sequence number: ", std::to_string(sequenceNumber));
+            LogToModuleFile("1", "Allocated sequence number: {}", sequenceNumber);
         }
 
         auto& key = kfvKey(kco);
@@ -5488,7 +5489,9 @@ void Syncd::run()
         {
             swss::Selectable *sel = NULL;
 
+            LogToModuleFile("1", "before select");
             int result = s->select(&sel);
+            LogToModuleFile("1", "after select");
 
             //restart query sequencer
             if (sel == m_restartQuery.get())
@@ -5502,11 +5505,12 @@ void Syncd::run()
                  */
 
                 SWSS_LOG_NOTICE("is asic queue empty: %d", m_selectableChannel->empty());
-
+                LogToModuleFile("1", "is asic queue empty start");
                 while (!m_selectableChannel->empty())
                 {
                     processEvent(*m_selectableChannel.get());
                 }
+                LogToModuleFile("1", "is asic queue empty end");
 
                 SWSS_LOG_NOTICE("drained queue");
 
@@ -5633,6 +5637,7 @@ void Syncd::run()
             }
             else if (sel == m_selectableChannel.get())
             {
+                LogToModuleFile("1", "m_selectableChannel.get()");
                 processEvent(*m_selectableChannel.get());
             }
             else
