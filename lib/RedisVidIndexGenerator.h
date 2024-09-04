@@ -6,6 +6,8 @@
 #include "swss/sal.h"
 
 #include <memory>
+#include "syncd/Logger.h"
+#include <mutex>
 
 namespace sairedis
 {

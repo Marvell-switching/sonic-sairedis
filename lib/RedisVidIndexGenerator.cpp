@@ -23,7 +23,7 @@ using namespace sairedis;
 RedisVidIndexGenerator::RedisVidIndexGenerator(
         _In_ std::shared_ptr<swss::DBConnector> dbConnector,
         _In_ const std::string& vidCounterName,
-        _In_ std::shared_ptr<std::mutex> t_mutex = nullptr):
+        _In_ std::shared_ptr<std::mutex> t_mutex):
     m_dbConnector(dbConnector),
     m_vidCounterName(vidCounterName),
     m_mutex(t_mutex)
