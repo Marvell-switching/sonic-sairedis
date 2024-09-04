@@ -146,6 +146,7 @@ void RedisClient::saveLaneMap(
 
     clearLaneMap(switchVid);
 
+    MY_LOCK();
     for (auto const &it: map)
     {
         sai_uint32_t lane = it.first;
@@ -156,10 +157,9 @@ void RedisClient::saveLaneMap(
 
         auto key = getRedisLanesKey(switchVid);
 
-        MY_LOCK();
         m_dbAsic->hset(key, strLane, strPortId);
-        MY_UNLOCK();
     }
+    MY_UNLOCK();
 }
 
 std::unordered_map<sai_object_id_t, sai_object_id_t> RedisClient::getObjectMap(
@@ -302,6 +302,7 @@ void RedisClient::saveColdBootDiscoveredVids(
 
     auto key = getRedisColdVidsKey(switchVid);
 
+    MY_LOCK();
     for (auto vid: coldVids)
     {
         sai_object_type_t objectType = VidManager::objectTypeQuery(vid);
@@ -309,10 +310,10 @@ void RedisClient::saveColdBootDiscoveredVids(
         std::string strObjectType = sai_serialize_object_type(objectType);
 
         std::string strVid = sai_serialize_object_id(vid);
-        MY_LOCK();
+
         m_dbAsic->hset(key, strVid, strObjectType);
-        MY_UNLOCK();
     }
+    MY_UNLOCK();
 }
 
 std::string RedisClient::getRedisHiddenKey(
@@ -392,7 +393,7 @@ std::set<sai_object_id_t> RedisClient::getColdVids(
      */
 
     std::set<sai_object_id_t> coldVids;
-
+    MY_LOCK();
     for (auto kvp: hash)
     {
         auto strVid = kvp.first;
@@ -403,9 +404,9 @@ std::set<sai_object_id_t> RedisClient::getColdVids(
         /*
          * Just make sure that vid in COLDVIDS is present in current vid2rid map
          */
-        MY_LOCK();
+
         auto rid = m_dbAsic->hget(VIDTORID, strVid);
-        MY_UNLOCK();
+
 
         if (rid == nullptr)
         {
@@ -414,6 +415,7 @@ std::set<sai_object_id_t> RedisClient::getColdVids(
 
         coldVids.insert(vid);
     }
+    MY_UNLOCK();
 
     return coldVids;
 }
@@ -427,15 +429,16 @@ void RedisClient::setPortLanes(
 
     auto key = getRedisLanesKey(switchVid);
 
+    MY_LOCK();
     for (uint32_t lane: lanes)
     {
         std::string strLane = sai_serialize_number(lane);
         std::string strPortRid = sai_serialize_object_id(portRid);
 
-        MY_LOCK();
         m_dbAsic->hset(key, strLane, strPortRid);
-        MY_UNLOCK();
+
     }
+    MY_UNLOCK();
 }
 
 size_t RedisClient::getAsicObjectsSize(
@@ -487,19 +490,19 @@ int RedisClient::removePortFromLanesMap(
 
     auto key = getRedisLanesKey(switchVid);
 
+    MY_LOCK();
     for (auto& kv: map)
     {
         if (kv.second == portRid)
         {
             std::string strLane = sai_serialize_number(kv.first);
 
-            MY_LOCK();
             m_dbAsic->hdel(key, strLane);
-            MY_UNLOCK();
-
+    
             removed++;
         }
     }
+    MY_UNLOCK();
 
     return removed;
 }
