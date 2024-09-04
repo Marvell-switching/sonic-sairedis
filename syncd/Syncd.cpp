@@ -134,7 +134,7 @@ Syncd::Syncd(
     }
     else
     {
-        m_notifications = std::make_shared<RedisNotificationProducer>(m_contextConfig->m_dbAsic);
+        m_notifications = std::make_shared<RedisNotificationProducer>(m_contextConfig->m_dbAsic, m_redis_mutex);
 
         m_enableSyncMode = m_commandLineOptions->m_redisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
 
@@ -180,7 +180,7 @@ Syncd::Syncd(
     m_flexCounterGroupTable = std::make_shared<swss::Table>(m_dbFlexCounter.get(), FLEX_COUNTER_GROUP_TABLE);
 
     m_switchConfigContainer = std::make_shared<sairedis::SwitchConfigContainer>();
-    m_redisVidIndexGenerator = std::make_shared<sairedis::RedisVidIndexGenerator>(m_dbAsic, REDIS_KEY_VIDCOUNTER);
+    m_redisVidIndexGenerator = std::make_shared<sairedis::RedisVidIndexGenerator>(m_dbAsic, REDIS_KEY_VIDCOUNTER, m_redis_mutex );
 
     m_virtualObjectIdManager =
         std::make_shared<sairedis::VirtualObjectIdManager>(
@@ -447,6 +447,7 @@ sai_status_t Syncd::processSingleEvent(
              LogToModuleFile("1", "no elements in m_buffer sequenceNumber {}",sequenceNumber);
         };
         m_sequencer->executeFuncInSequence(sequenceNumber, lambda);
+        LogToModuleFile("1", "end executeFuncInSequence  sequenceNumber {} with key.length 0",sequenceNumber);
         return SAI_STATUS_SUCCESS;
     }
 
@@ -5608,6 +5609,7 @@ void Syncd::run()
                 {
                     LogToModuleFile("1", "m_flexCounter failed to execute function in sequence, sequence number: {}", std::to_string(sequenceNumber));
                 }
+                LogToModuleFile("1", "end executeFuncInSequence sequenceNumber {} processFlexCounterEvent",sequenceNumber);
             }
             else if (sel == m_flexCounterGroup.get())
             {
@@ -5634,6 +5636,7 @@ void Syncd::run()
                 {
                     LogToModuleFile("1", "m_flexCounterGroup failed to execute function in sequence, sequence number: {}",  std::to_string(sequenceNumber));
                 }
+                LogToModuleFile("1", "end executeFuncInSequence  sequenceNumber {} processFlexCounterGroupEvent",sequenceNumber);
             }
             else if (sel == m_selectableChannel.get())
             {
@@ -5779,6 +5782,7 @@ void Syncd::sendStausResponseSequence(
         {
             LogToModuleFile("1", "failed to execute function in sequence, sequence number: {}",std::to_string(sequenceNumber));
         }
+        LogToModuleFile("1", "end sendStausResponseSequence  sequenceNumber {}",sequenceNumber);
     }
     else {
         // If the response is not to be sequenced, then send it directly
@@ -5799,6 +5803,7 @@ void Syncd::sendStausAdvancedResponseSequence(
         {
             LogToModuleFile("1", "failed to execute function in sequence, sequence number:", std::to_string(sequenceNumber));
         }
+        LogToModuleFile("1", "end sendStausAdvancedResponseSequence sequenceNumber {}",sequenceNumber);
     }
     else {
         // If the response is not to be sequenced, then send it directly

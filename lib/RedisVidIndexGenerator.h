@@ -16,7 +16,8 @@ namespace sairedis
 
             RedisVidIndexGenerator(
                     _In_ std::shared_ptr<swss::DBConnector> dbConnector,
-                    _In_ const std::string& vidCounterName);
+                    _In_ const std::string& vidCounterName,
+                    _In_ std::shared_ptr<std::mutex> t_mutex = nullptr);
 
             virtual ~RedisVidIndexGenerator() = default;
 
@@ -31,5 +32,9 @@ namespace sairedis
             std::shared_ptr<swss::DBConnector> m_dbConnector;
 
             std::string m_vidCounterName;
+
+            bool m_protected;
+
+            std::shared_ptr<std::mutex> m_mutex;
     };
 }
