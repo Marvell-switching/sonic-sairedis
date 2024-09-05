@@ -525,7 +525,7 @@ namespace syncd
 
             bool m_asicInitViewMode;
             void pushRingBuffer(SyncdRing* ringBuffer , AnyTask&& func);
-            void popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName);
+            void popRingBuffer(SyncdRing* ringBuffer);
             void enableRingBuffer();
 
             std::shared_ptr<FlexCounterManager> m_manager;
