@@ -391,7 +391,8 @@ namespace syncd
                     _In_ sai_object_id_t switchVid,
                     _In_ sai_status_t status,
                     _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list,
+                    //_In_ sai_attribute_t *attr_list,
+                    _In_ std::shared_ptr<sai_attribute_t[]> attr_list,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ sai_common_api_t api);
 
@@ -476,7 +477,8 @@ namespace syncd
                     _In_ sai_object_id_t switchVid,
                     _In_ sai_status_t status,
                     _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_listsendApiResponse);
+                    //_In_ sai_attribute_t *attr_listsendApiResponse);
+                    _In_ std::shared_ptr<sai_attribute_t[]> attr_list);
 
             void sendNotifyResponse(
                     _In_ sai_status_t status,

@@ -1039,12 +1039,13 @@ void Syncd::sendGetResponseUpdateRedisQuadEvent(
         _In_ sai_object_id_t switchVid,
         _In_ sai_status_t status,
         _In_ uint32_t attr_count,
-        _In_ sai_attribute_t *attr_list,
+        //_In_ sai_attribute_t *attr_list,
+        _In_ std::shared_ptr<sai_attribute_t[]> attr_list,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
         _In_ sai_common_api_t api)
 {
     syncUpdateRedisQuadEvent(status, api, kco);
-    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
+    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, std::move(attr_list));
 }
 
 void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
@@ -2596,6 +2597,11 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
 
     sai_object_id_t switchVid = SAI_NULL_OBJECT_ID;
 
+    std::shared_ptr<sai_attribute_t[]> newPtr(new sai_attribute_t[attr_count]);
+    
+    // Copy data from raw pointer to new memory
+    std::memcpy(newPtr.get(), attr_list, attr_count * sizeof(sai_attribute_t));
+
     if (info->isnonobjectid)
     {
         /*
@@ -2623,7 +2629,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
             status = SAI_STATUS_INVALID_OBJECT_ID;
             LogToModuleFile("1", "1. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
             auto lambda = [=]() {
-                sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, attr_list, kco, api);
+                sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
             };
             sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2671,7 +2677,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
      */
     LogToModuleFile("1", "2. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
     auto lambda = [=]() {
-        sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, attr_list, kco, api);
+        sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -3240,11 +3246,15 @@ sai_status_t Syncd::processQuadEvent(
         }
 
         // extract switch VID from any object type
+        std::shared_ptr<sai_attribute_t[]> newPtr(new sai_attribute_t[attr_count]);
+    
+        // Copy data from raw pointer to new memory
+        std::memcpy(newPtr.get(), attr_list, attr_count * sizeof(sai_attribute_t));
 
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
         LogToModuleFile("1", "add sendGetResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
         auto lambda = [=]() {
-            sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list, kco, api);
+            sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
         };
         sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -3678,7 +3688,8 @@ void Syncd::sendGetResponse(
         _In_ sai_object_id_t switchVid,
         _In_ sai_status_t status,
         _In_ uint32_t attr_count,
-        _In_ sai_attribute_t *attr_list)
+        //_In_ sai_attribute_t *attr_list
+        _In_ std::shared_ptr<sai_attribute_t[]> attr_list)
 {
     SWSS_LOG_ENTER();
 
@@ -3686,7 +3697,7 @@ void Syncd::sendGetResponse(
 
     if (status == SAI_STATUS_SUCCESS)
     {
-        m_translator->translateRidToVid(objectType, switchVid, attr_count, attr_list);
+        m_translator->translateRidToVid(objectType, switchVid, attr_count, attr_list.get());
 
         /*
          * Normal serialization + translate RID to VID.
@@ -3695,14 +3706,14 @@ void Syncd::sendGetResponse(
         entry = SaiAttributeList::serialize_attr_list(
                 objectType,
                 attr_count,
-                attr_list,
+                attr_list.get(),
                 false);
 
         /*
          * All oid values here are VIDs.
          */
 
-        snoopGetResponse(objectType, strObjectId, attr_count, attr_list);
+        snoopGetResponse(objectType, strObjectId, attr_count, attr_list.get());
     }
     else if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
@@ -3719,7 +3730,7 @@ void Syncd::sendGetResponse(
         entry = SaiAttributeList::serialize_attr_list(
                 objectType,
                 attr_count,
-                attr_list,
+                attr_list.get(),
                 true);
     }
     else
