@@ -40,10 +40,14 @@ namespace saimeta
                     _In_ const sai_attribute_t *attr_list,
                     _In_ bool countOnly);
 
+            SaiAttributeList(const SaiAttributeList&);
+
+            SaiAttributeList& operator=(const SaiAttributeList&);
+
         private:
 
-            SaiAttributeList(const SaiAttributeList&);
-            SaiAttributeList& operator=(const SaiAttributeList&);
+
+
 
             std::vector<sai_attribute_t> m_attr_list;
             std::vector<sai_attr_value_type_t> m_attr_value_type_list;

@@ -45,7 +45,6 @@ namespace syncd
     #define SLEEP_MSECONDS 500
     using AnyTask = std::function<void()>;
 
-    
     typedef syncdMultipleRingBuff::RingBuffer<AnyTask, ORCH_RING_SIZE> SyncdRing;
     struct OperationGroup {
             std::set<std::string> operations;
@@ -98,8 +97,7 @@ namespace syncd
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
                     _In_ sai_common_api_t api,
-                    _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list,
+                    _In_ saimeta::SaiAttributeList list,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ int sequenceNumber);
 
@@ -306,8 +304,7 @@ namespace syncd
             sai_status_t processQuadInInitViewModeCreate(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
-                    _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list,
+                    _In_ saimeta::SaiAttributeList list,
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ int sequenceNumber);
@@ -322,7 +319,7 @@ namespace syncd
             sai_status_t processQuadInInitViewModeSet(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
-                    _In_ sai_attribute_t *attr,
+                    _In_ saimeta::SaiAttributeList list,
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,           
                     _In_ int sequenceNumber);
@@ -330,8 +327,7 @@ namespace syncd
             sai_status_t processQuadInInitViewModeGet(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
-                    _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list,
+                    _In_ saimeta::SaiAttributeList list,
                     _In_ sai_common_api_t api,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ int sequenceNumber);
@@ -384,14 +380,12 @@ namespace syncd
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ int sequenceNumber);
 
-
              void sendGetResponseUpdateRedisQuadEvent(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::string& strObjectId,
                     _In_ sai_object_id_t switchVid,
                     _In_ sai_status_t status,
-                    _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list,
+                    _In_ saimeta::SaiAttributeList list,
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
                     _In_ sai_common_api_t api);
 
@@ -475,8 +469,7 @@ namespace syncd
                     _In_ const std::string& strObjectId,
                     _In_ sai_object_id_t switchVid,
                     _In_ sai_status_t status,
-                    _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_listsendApiResponse);
+                    _In_ saimeta::SaiAttributeList list);
 
             void sendNotifyResponse(
                     _In_ sai_status_t status,
