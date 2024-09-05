@@ -1038,12 +1038,13 @@ void Syncd::sendGetResponseUpdateRedisQuadEvent(
         _In_ const std::string& strObjectId,
         _In_ sai_object_id_t switchVid,
         _In_ sai_status_t status,
-        _In_ saimeta::SaiAttributeList list,
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
         _In_ sai_common_api_t api)
 {
     syncUpdateRedisQuadEvent(status, api, kco);
-    sendGetResponse(objectType, strObjectId, switchVid, status, list);
+    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list);
 }
 
 void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
@@ -2395,7 +2396,8 @@ sai_status_t Syncd::processQuadEventInInitViewMode(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
         _In_ sai_common_api_t api,
-        _In_ saimeta::SaiAttributeList list,
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
         _In_ int sequenceNumber)
 {
@@ -2411,16 +2413,16 @@ sai_status_t Syncd::processQuadEventInInitViewMode(
     switch (api)
     {
         case SAI_COMMON_API_CREATE:
-            return processQuadInInitViewModeCreate(objectType, strObjectId, list, api, kco, sequenceNumber);
+            return processQuadInInitViewModeCreate(objectType, strObjectId, attr_count, attr_list, api, kco, sequenceNumber);
 
         case SAI_COMMON_API_REMOVE:
             return processQuadInInitViewModeRemove(objectType, strObjectId, api, kco, sequenceNumber);
 
         case SAI_COMMON_API_SET:
-            return processQuadInInitViewModeSet(objectType, strObjectId, list, api, kco, sequenceNumber);
+            return processQuadInInitViewModeSet(objectType, strObjectId, attr_list, api, kco, sequenceNumber);
 
         case SAI_COMMON_API_GET:
-            return processQuadInInitViewModeGet(objectType, strObjectId, list, api, kco, sequenceNumber);
+            return processQuadInInitViewModeGet(objectType, strObjectId, attr_count, attr_list, api, kco, sequenceNumber);
 
         default:
 
@@ -2431,7 +2433,8 @@ sai_status_t Syncd::processQuadEventInInitViewMode(
 sai_status_t Syncd::processQuadInInitViewModeCreate(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
-        _In_ saimeta::SaiAttributeList list,
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list,
         _In_ sai_common_api_t api,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
         _In_ int sequenceNumber)
@@ -2470,8 +2473,6 @@ sai_status_t Syncd::processQuadInInitViewModeCreate(
 
         if (objectType == SAI_OBJECT_TYPE_SWITCH)
         {
-            uint32_t attr_count = list.get_attr_count();
-            sai_attribute_t *attr_list = list.get_attr_list();
             onSwitchCreateInInitViewMode(objectVid, attr_count, attr_list);
         }
         else
@@ -2561,7 +2562,7 @@ sai_status_t Syncd::processQuadInInitViewModeRemove(
 sai_status_t Syncd::processQuadInInitViewModeSet(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
-        _In_ saimeta::SaiAttributeList list,
+        _In_ sai_attribute_t *attr,
         _In_ sai_common_api_t api,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,        
         _In_ int sequenceNumber)
@@ -2581,7 +2582,8 @@ sai_status_t Syncd::processQuadInInitViewModeSet(
 sai_status_t Syncd::processQuadInInitViewModeGet(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
-        _In_ saimeta::SaiAttributeList list,
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list,
         _In_ sai_common_api_t api,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,        
         _In_ int sequenceNumber)
@@ -2618,11 +2620,10 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
                     strObjectId.c_str(),
                     sai_serialize_object_type(objectType).c_str());
 
-            status = SAI_STATUS_INVALID_OBJECT_ID;             
-                      
+            status = SAI_STATUS_INVALID_OBJECT_ID;
             LogToModuleFile("1", "1. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
             auto lambda = [=]() {
-                sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, list, kco, api);
+                sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, attr_list, kco, api);
             };
             sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2657,7 +2658,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
         metaKey.objecttype = objectType;
         metaKey.objectkey.key.object_id = rid;
 
-        status = m_vendorSai->get(metaKey, list.get_attr_count(), list.get_attr_list());
+        status = m_vendorSai->get(metaKey, attr_count, attr_list);
     }
 
     /*
@@ -2670,7 +2671,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
      */
     LogToModuleFile("1", "2. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
     auto lambda = [=]() {
-        sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, list, kco, api);
+        sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, attr_list, kco, api);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -3156,6 +3157,7 @@ sai_status_t Syncd::processQuadEvent(
      * Attribute list can't be const since we will use it to translate VID to
      * RID in place.
      */
+
     sai_attribute_t *attr_list = list.get_attr_list();
     uint32_t attr_count = list.get_attr_count();
 
@@ -3181,7 +3183,7 @@ sai_status_t Syncd::processQuadEvent(
 
     if (isInitViewMode())
     {
-        sai_status_t status = processQuadEventInInitViewMode(metaKey.objecttype, strObjectId, api, list, kco, sequenceNumber);
+        sai_status_t status = processQuadEventInInitViewMode(metaKey.objecttype, strObjectId, api, attr_count, attr_list, kco, sequenceNumber);
 
         return status;
     }
@@ -3242,7 +3244,7 @@ sai_status_t Syncd::processQuadEvent(
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
         LogToModuleFile("1", "add sendGetResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
         auto lambda = [=]() {
-            sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, list, kco, api);
+            sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list, kco, api);
         };
         sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -3675,15 +3677,12 @@ void Syncd::sendGetResponse(
         _In_ const std::string& strObjectId,
         _In_ sai_object_id_t switchVid,
         _In_ sai_status_t status,
-        _In_ saimeta::SaiAttributeList list)
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list)
 {
     SWSS_LOG_ENTER();
 
     std::vector<swss::FieldValueTuple> entry;
-
-    sai_attribute_t *attr_list = list.get_attr_list();
-
-    uint32_t attr_count = list.get_attr_count();
 
     if (status == SAI_STATUS_SUCCESS)
     {
