@@ -374,9 +374,9 @@ void Syncd::processEvent(
         _In_ sairedis::SelectableChannel& consumer)
 {
     SWSS_LOG_ENTER();
-    static int entries = 0;
+    // static int entries = 0;
 
-    LogToModuleFile("1", "!!!processEvent, ITERATION: {} m_enableSyncMode {}!!!", entries++, m_enableSyncMode);
+    // LogToModuleFile("1", "!!!processEvent, ITERATION: {} m_enableSyncMode {}!!!", entries++, m_enableSyncMode);
 
     std::lock_guard<std::mutex> lock(m_mutex);
     LogToModuleFile("1", "after lock");
@@ -407,9 +407,9 @@ void Syncd::processEvent(
             LogToModuleFile("1", "Allocated sequence number: {}", sequenceNumber);
         }
 
-        auto& key = kfvKey(kco);
-        auto& op = kfvOp(kco);
-        LogToModuleFile("1", "sequenceNumber: {} op: {} key: {}", sequenceNumber,op.c_str(), key.c_str());
+        // auto& key = kfvKey(kco);
+        // auto& op = kfvOp(kco);
+        // LogToModuleFile("1", "sequenceNumber: {} op: {} key: {}", sequenceNumber,op.c_str(), key.c_str());
 
         if (ringBuffer) {
 			LogToModuleFile("1", "push processSingleEvent with sequenceNumber {} to ring buffer {} ",sequenceNumber, getNameByRingBuffer(ringBuffer));
@@ -5367,8 +5367,9 @@ void Syncd::getObjectTypeByOperation(
             sai_deserialize_object_type(fvValue(values[0]), objectType);
             LogToModuleFile("1", "op {} has object id ", op.c_str(), sai_serialize_object_type(objectType).c_str());
         }
-        else
+        else {
             LogToModuleFile("1", "Error op {} has no value", op.c_str());
+        }
     }    
     else if (op == REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY)
     {
@@ -5386,12 +5387,12 @@ bool Syncd::findOperationGroup(
     bool found = false;
 
     for (const auto& pair : operationGroups) {
-        const std::string& groupName = pair.first;
+        //const std::string& groupName = pair.first;
         const OperationGroup& operationGroup = pair.second;
 
         if (operationGroup.operations.find(valueStr) != operationGroup.operations.end()) {
             ringBuffer = operationGroup.ringBuffer;
-            LogToModuleFile("1", "Found {} in operation group: {}", valueStr, groupName);
+            //LogToModuleFile("1", "Found {} in operation group: {}", valueStr, groupName);
             LogToModuleFile("1", "Ring buffer pointer: {}", reinterpret_cast<void*>(ringBuffer));
             found = true;
             break;
