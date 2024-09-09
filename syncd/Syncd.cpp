@@ -35,7 +35,7 @@
 
 #include <iterator>
 #include <algorithm>
-
+#include "Logger.h"
 
 #define DEF_SAI_WARM_BOOT_DATA_FILE "/var/warmboot/sai-warmboot.bin"
 #define SAI_FAILURE_DUMP_SCRIPT "/usr/bin/sai_failure_dump.sh"
@@ -52,85 +52,6 @@ using namespace std::placeholders;
 #define WD_DELAY_FACTOR 1
 #endif
 
-// multi thread syncd - start
-#define KCO_DEBUG(_kco) \
-    { \
-        LogToModuleFile("1", "KCO op: {} key: {}", kfvOp(_kco).c_str(), kfvKey(_kco).c_str()); \
-    }
-
-#define RB_PUSH(_func_call, _kco) \ 
-    { \
-            sequencer::seq_t _seq; \
-            SyncdRing* _ringBuffer; \
-            getApiRingBuffer(kco, _ringBuffer); \
-            sequencer::SequenceStatus _ret = m_sequencer->allocateSequenceNumber(&_seq);\
-            if (_ret != sequencer::SUCCESS) KCO_DEBUG(_kco); \
-            if ( _ringBuffer  ) { \
-                auto lambda = [=](){ _func_call(std::move(_kco), _seq); }; \
-                pushRingBuffer(_ringBuffer, lambda); \
-            } else { \
-                _func_call(_kco, _seq); \
-            } \
-    }
-
-#define SEQ_EXEC_EMPTY(_seq)\
-    { \
-       m_sequencer->executeFuncInSequence(_seq); \
-    } 
-
-
- std::shared_ptr<sai_attribute_t[]> attr_list_safe(
-    uint32_t attr_count,
-    sai_attribute_t *attr_list
- )
- {
-    std::shared_ptr<sai_attribute_t[]> n_attr_list(new sai_attribute_t[attr_count]); \
-    std::memcpy(n_attr_list.get(), attr_list, attr_count * sizeof(sai_attribute_t)); 
-    return n_attr_list;
- }
-
-#define SEQ_ATTR( _attr_count, _attr_list) \
-    _attr_count , std::move( (attr_list_safe(_attr_count, _attr_list)))
-
- std::shared_ptr<sai_status_t[]> status_list_safe(
-    uint32_t status_count,
-    const sai_status_t *status_list
- )
- {
-    std::shared_ptr<sai_status_t[]> n_status_list(new sai_status_t[status_count]); \
-    std::memcpy(n_status_list.get(), status_list, status_count * sizeof(sai_status_t)); 
-    return n_status_list;
- }
-  
-// #define SEQ_STATUS( _status_count, _status_list) 
-//     _status_count , std::move( (status_list_safe( ((uint32_t))(_status_count) , (_status_list) )))
-    
-
-#define SEQ_STATUS(_status_count, _status_list) \
-    (uint32_t)_status_count , std::move(status_list_safe((uint32_t)(_status_count), (_status_list))) , true
-
-#define SEQ_EXEC_PUSH(_seq, _func_call)\
-{\
-    auto _lambda = [=]() { _func_call; }; \
-    m_sequencer->executeFuncInSequence(_seq, _lambda); \
-}
-
-#define SEQ_EXEC(_func_call)\
-{\
-    int _seq; \
-    m_sequencer->allocateSequenceNumber(&_seq);\
-    SEQ_EXEC_PUSH(_seq, _func_call) \
-}
-
-#define REDIS_PROTECT(_func_call)\
-    m_redis_mutex.lock();\
-    _func_call; \
-    m_redis_mutex.unlock();
-
-// multi thread syncd -> end 
-
-
- 
 Syncd::Syncd(
         _In_ std::shared_ptr<sairedis::SaiInterface> vendorSai,
         _In_ std::shared_ptr<CommandLineOptions> cmd,
@@ -197,6 +118,7 @@ Syncd::Syncd(
     m_profileIter = m_profileMap.begin();
 
     // we need STATE_DB ASIC_DB and COUNTERS_DB
+
     m_dbAsic = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbAsic, 0);
     m_mdioIpcServer = std::make_shared<MdioIpcServer>(m_vendorSai, m_commandLineOptions->m_globalContext);
 
@@ -212,16 +134,14 @@ Syncd::Syncd(
     }
     else
     {
-    // restore with no lock 
         m_notifications = std::make_shared<RedisNotificationProducer>(m_contextConfig->m_dbAsic, m_redis_mutex);
 
         m_enableSyncMode = m_commandLineOptions->m_redisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
 
         bool modifyRedis = m_enableSyncMode ? false : true;
 
-// multi thread syncd -> m_redis_mutex
         m_redis_mutex = std::make_shared<std::mutex>();
-// multi thread syncd -> m_redis_mutex
+
         m_selectableChannel = std::make_shared<sairedis::RedisSelectableChannel>(
                 m_dbAsic,
                 ASIC_STATE_TABLE,
@@ -231,12 +151,9 @@ Syncd::Syncd(
                 m_redis_mutex);
     }
 
-// multi thread syncd -> m_redis_mutex
     m_client = std::make_shared<RedisClient>(m_dbAsic, m_redis_mutex);
-
-// multi thread syncd -> m_sequencer
     m_sequencer = std::make_shared<sequencer::Sequencer>();
-// multi thread syncd -> added m_redis_mutex to NotificationProcessor instead to  m_notifications
+
     m_processor = std::make_shared<NotificationProcessor>(m_notifications, m_client, std::bind(&Syncd::syncProcessNotification, this, _1));
     m_handler = std::make_shared<NotificationHandler>(m_processor);
 
@@ -253,7 +170,7 @@ Syncd::Syncd(
 
     m_handler->setSwitchNotifications(m_sn.getSwitchNotifications());
 
-    m_restartQuery = std::make_shared<swss::NotificationConsumer>(m_dbAsic.get(), SYNCD_NOTIFICATION_CHANNEL_RESTARTQUERY_PER_DB(m_contextConfig->m_dbAsic));
+    m_restartQuery = std::make_shared<swss::NotificationConsumer>(m_client->redis_get(), SYNCD_NOTIFICATION_CHANNEL_RESTARTQUERY_PER_DB(m_contextConfig->m_dbAsic));
 
     // TODO to be moved to ASIC_DB
     m_dbFlexCounter = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbFlex, 0);
@@ -263,7 +180,6 @@ Syncd::Syncd(
     m_flexCounterGroupTable = std::make_shared<swss::Table>(m_dbFlexCounter.get(), FLEX_COUNTER_GROUP_TABLE);
 
     m_switchConfigContainer = std::make_shared<sairedis::SwitchConfigContainer>();
-// multi thread syncd -> m_redis_mutex
     m_redisVidIndexGenerator = std::make_shared<sairedis::RedisVidIndexGenerator>(m_dbAsic, REDIS_KEY_VIDCOUNTER, m_redis_mutex );
 
     m_virtualObjectIdManager =
@@ -300,11 +216,11 @@ Syncd::Syncd(
 
     if (initializeOperationGroups() != SAI_STATUS_SUCCESS)
     {
-	    SWSS_LOG_ERROR("FATAL: failed to initialize operation groups");
+	    LogToModuleFile("init","FATAL: failed to initialize operation groups");
+        SWSS_LOG_ERROR("FATAL: failed to initialize operation groups");
         abort();
     }
 
-// multi thread syncd -> start
     for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
         const std::string& groupName = it->first;
         const OperationGroup& group = it->second;
@@ -316,12 +232,10 @@ Syncd::Syncd(
 			LogToModuleFile("1","start ring buff {}",getNameByRingBuffer(group.ringBuffer));
         }
     }
-// multi thread syncd -> end
 
     SWSS_LOG_NOTICE("syncd started");
 }
 
-// multi thread syncd -> start
 void Syncd::popRingBuffer(SyncdRing* ringBuffer)
 {
     if (!ringBuffer || ringBuffer->Started)
@@ -350,16 +264,14 @@ void Syncd::popRingBuffer(SyncdRing* ringBuffer)
         ringBuffer->Idle = true;
     }
 }
-// multi thread syncd -> end
 
 Syncd::~Syncd()
 {
     SWSS_LOG_ENTER();
 
-// multi thread syncd -> start 
     // Clean up resources
     ring_thread_exited = true;
-
+    
     // Join threads to ensure they complete before destroying the object
     for (auto it = ringBufferThreads.begin(); it != ringBufferThreads.end(); ++it) {
         auto& thread = it->second;
@@ -376,8 +288,6 @@ Syncd::~Syncd()
             group.ringBuffer = nullptr;
         }
     }
-
-// multi thread syncd -> end
 }
 
 void Syncd::performStartupLogic()
@@ -464,7 +374,12 @@ void Syncd::processEvent(
         _In_ sairedis::SelectableChannel& consumer)
 {
     SWSS_LOG_ENTER();
+    // static int entries = 0;
+
+    // LogToModuleFile("1", "!!!processEvent, ITERATION: {} m_enableSyncMode {}!!!", entries++, m_enableSyncMode);
+
     std::lock_guard<std::mutex> lock(m_mutex);
+    LogToModuleFile("1", "after lock");
 
     do
     {
@@ -474,117 +389,130 @@ void Syncd::processEvent(
          * to specify temporary view prefix in consumer since consumer puts
          * data to redis db.
          */
-         consumer.pop(kco, isInitViewMode());
-// multi thread syncd -> RB_PUSH
-        RB_PUSH(processSingleEvent, kco);
+        LogToModuleFile("1", "before consumer.pop");
+        consumer.pop(kco, isInitViewMode());
+        LogToModuleFile("1", "after consumer.pop");
+        SyncdRing* ringBuffer;
+        getApiRingBuffer(kco, ringBuffer);
+
+        LogToModuleFile("1","getApiRingBuffer end");
+
+        int sequenceNumber;
+        if(!m_sequencer->allocateSequenceNumber(&sequenceNumber))
+        {
+            LogToModuleFile("1", "Failed to allocate sequence number");
+            //todo: handle wait until sequence number is available with timeout 
+        }
+        else {
+            LogToModuleFile("1", "Allocated sequence number: {}", sequenceNumber);
+        }
+
+        // auto& key = kfvKey(kco);
+        // auto& op = kfvOp(kco);
+        // LogToModuleFile("1", "sequenceNumber: {} op: {} key: {}", sequenceNumber,op.c_str(), key.c_str());
+
+        if (ringBuffer) {
+			LogToModuleFile("1", "push processSingleEvent with sequenceNumber {} to ring buffer {} ",sequenceNumber, getNameByRingBuffer(ringBuffer));
+            auto lambda = [=](){
+                processSingleEvent(kco, sequenceNumber);
+            };
+            pushRingBuffer(ringBuffer, lambda);
+        } 
+        // operation not found in operationGroups and will be executed without ring buffer
+        else {
+			LogToModuleFile("1", "processSingleEvent with sequenceNumber {} in main thread",sequenceNumber);
+            processSingleEvent(kco, sequenceNumber);
+        }  
+
     }
     while (!consumer.empty());
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processSingleEvent(
         _In_ const swss::KeyOpFieldsValuesTuple &kco, 
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
     auto& key = kfvKey(kco);
     auto& op = kfvOp(kco);
 
-    SWSS_LOG_INFO("key: %s op: %s", key.c_str(), op.c_str());
+    LogToModuleFile("1","key: {} op: {} {}", key, op, std::to_string(sequenceNumber));
 
     if (key.length() == 0)
     {
         SWSS_LOG_DEBUG("no elements in m_buffer");
-// multi thread syncd -> SEQ_EXEC_EMPTY
-        SEQ_EXEC_EMPTY(seq);
+        LogToModuleFile("1", "add to lambda no elements in m_buffer sequenceNumber {}",sequenceNumber);
+        auto lambda = [=](){
+             LogToModuleFile("1", "no elements in m_buffer sequenceNumber {}",sequenceNumber);
+        };
+        m_sequencer->executeFuncInSequence(sequenceNumber, lambda);
+        LogToModuleFile("1", "end executeFuncInSequence  sequenceNumber {} with key.length 0",sequenceNumber);
         return SAI_STATUS_SUCCESS;
     }
 
     WatchdogScope ws(m_timerWatchdog, op + ":" + key, &kco);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
- // multi thread syncd -> seq
-        return processQuadEvent(SAI_COMMON_API_CREATE, kco, seq);
+        return processQuadEvent(SAI_COMMON_API_CREATE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_REMOVE)
- // multi thread syncd -> seq
-       return processQuadEvent(SAI_COMMON_API_REMOVE, kco, seq);
+        return processQuadEvent(SAI_COMMON_API_REMOVE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_SET)
-// multi thread syncd -> seq
-        return processQuadEvent(SAI_COMMON_API_SET, kco, seq);
+        return processQuadEvent(SAI_COMMON_API_SET, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_GET)
-// multi thread syncd -> seq
-        return processQuadEvent(SAI_COMMON_API_GET, kco, seq);
+        return processQuadEvent(SAI_COMMON_API_GET, kco, sequenceNumber);
 
-// multi thread syncd -> seq
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE)
-// multi thread syncd -> seq
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, seq);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE)
-// multi thread syncd -> seq
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, seq);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_SET)
-// multi thread syncd -> seq
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, seq);
+        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_NOTIFY)
-// multi thread syncd -> seq
-        return processNotifySyncd(kco, seq);
+        return processNotifySyncd(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_GET_STATS)
-// multi thread syncd -> seq
-        return processGetStatsEvent(kco, seq);
+        return processGetStatsEvent(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CLEAR_STATS)
-// multi thread syncd -> seq
-        return processClearStatsEvent(kco, seq);
+        return processClearStatsEvent(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_FLUSH)
-// multi thread syncd -> seq
-        return processFdbFlush(kco, seq);
+        return processFdbFlush(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_QUERY)
-// multi thread syncd -> seq
-        return processAttrCapabilityQuery(kco, seq);
+        return processAttrCapabilityQuery(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_QUERY)
-// multi thread syncd -> seq
-        return processAttrEnumValuesCapabilityQuery(kco, seq);
+        return processAttrEnumValuesCapabilityQuery(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY)
-// multi thread syncd -> seq
-        return processObjectTypeGetAvailabilityQuery(kco, seq);
+        return processObjectTypeGetAvailabilityQuery(kco, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_START_POLL)
-// multi thread syncd -> seq
-        return processFlexCounterEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, seq);
+        return processFlexCounterEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_STOP_POLL)
-// multi thread syncd -> seq
-        return processFlexCounterEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, seq);
+        return processFlexCounterEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_SET_GROUP)
-// multi thread syncd -> seq
-        return processFlexCounterGroupEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, seq);
+        return processFlexCounterGroupEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_DEL_GROUP)
-// multi thread syncd -> seq
-        return processFlexCounterGroupEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, seq);
+        return processFlexCounterGroupEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
 
-// multi thread syncd -> SEQ_EXEC_EMPTY
-    SEQ_EXEC_EMPTY(seq);
     SWSS_LOG_THROW("event op '%s' is not implemented, FIXME", op.c_str());
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processAttrCapabilityQuery(
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -601,9 +529,7 @@ sai_status_t Syncd::processAttrCapabilityQuery(
     {
         SWSS_LOG_ERROR("Invalid input: expected 2 arguments, received %zu", values.size());
 
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH(seq, 
-        m_selectableChannel->set(sai_serialize_status(SAI_STATUS_INVALID_PARAMETER), {}, REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE));
+        sendStausResponseSequence(SAI_STATUS_INVALID_PARAMETER, REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE, {}, sequenceNumber);
 
         return SAI_STATUS_INVALID_PARAMETER;
     }
@@ -633,17 +559,14 @@ sai_status_t Syncd::processAttrCapabilityQuery(
             capability.create_implemented, capability.set_implemented, capability.get_implemented);
     }
 
-// multi thread syncd -> SEQ_EXEC_PUSH
-    SEQ_EXEC_PUSH(seq, 
-    m_selectableChannel->set(sai_serialize_status(status), std::move(entry), REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE));
+    sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE, entry, sequenceNumber);
 
     return status;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processAttrEnumValuesCapabilityQuery(
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -660,9 +583,7 @@ sai_status_t Syncd::processAttrEnumValuesCapabilityQuery(
     {
         SWSS_LOG_ERROR("Invalid input: expected 3 arguments, received %zu", values.size());
 
-    // multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH(seq, 
-        m_selectableChannel->set(sai_serialize_status(SAI_STATUS_INVALID_PARAMETER), {}, REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE));
+        sendStausResponseSequence(SAI_STATUS_INVALID_PARAMETER, REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE, {}, sequenceNumber);
 
         return SAI_STATUS_INVALID_PARAMETER;
     }
@@ -715,17 +636,14 @@ sai_status_t Syncd::processAttrEnumValuesCapabilityQuery(
         SWSS_LOG_DEBUG("Sending response: count = %u", enumCapList.count);
     }
 
-// multi thread syncd -> SEQ_EXEC_PUSH + std::move
-    SEQ_EXEC_PUSH(seq,
-    m_selectableChannel->set(sai_serialize_status(status), std::move(entry), REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE) );
+    sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE, entry, sequenceNumber);
 
     return status;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processObjectTypeGetAvailabilityQuery(
     _In_ const swss::KeyOpFieldsValuesTuple &kco,
-    _In_ sequencer::seq_t seq)
+    _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -772,17 +690,14 @@ sai_status_t Syncd::processObjectTypeGetAvailabilityQuery(
         SWSS_LOG_DEBUG("Sending response: count = %lu", count);
     }
 
-// multi thread syncd -> SEQ_EXEC_PUSH + std::move
-    SEQ_EXEC_PUSH(seq,
-    m_selectableChannel->set(sai_serialize_status(status), std::move(entry), REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_RESPONSE) );
+    sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_RESPONSE, entry, sequenceNumber);
 
     return status;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processFdbFlush(
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -816,10 +731,23 @@ sai_status_t Syncd::processFdbFlush(
 
     sai_status_t status = m_vendorSai->flushFdbEntries(switchRid, attr_count, attr_list);
 
-// multi thread syncd -> SEQ_EXEC_PUSH
-    SEQ_EXEC_PUSH( seq,
-    m_selectableChannel->set(sai_serialize_status(status), {} , REDIS_ASIC_STATE_COMMAND_FLUSHRESPONSE) );
-    
+
+    // If the response is to be sequenced, then add it to the sequencer
+    auto lambda = [=]() {
+        processFdbFlushResponse(status, values, switchVid);
+    };
+    LogToModuleFile("1", "add processFdbFlushResponse to sequencer {}", sequenceNumber);
+    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
+
+    return status;
+}
+
+void Syncd::processFdbFlushResponse(
+        _In_ sai_status_t status,
+        _In_ std::vector<swss::FieldValueTuple> values,
+        _In_ sai_object_id_t switchVid)
+{
+
     if (status == SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE("fdb flush succeeded, updating redis database");
@@ -837,9 +765,11 @@ sai_status_t Syncd::processFdbFlush(
         sai_object_id_t bvId = SAI_NULL_OBJECT_ID;
         sai_object_id_t bridgePortId = SAI_NULL_OBJECT_ID;
         
+		SaiAttributeList list(SAI_OBJECT_TYPE_FDB_FLUSH, values, false);
+        SaiAttributeList vidlist(SAI_OBJECT_TYPE_FDB_FLUSH, values, false);
 	
-        attr_list = vidlist.get_attr_list();
-        attr_count = vidlist.get_attr_count();
+        sai_attribute_t *attr_list = vidlist.get_attr_list();
+        uint32_t attr_count = vidlist.get_attr_count();
 
         for (uint32_t i = 0; i < attr_count; i++)
         {
@@ -866,13 +796,12 @@ sai_status_t Syncd::processFdbFlush(
         m_client->processFlushEvent(switchVid, bridgePortId, bvId, type);
     }
 
-    return status;
+    sendStatusAndEntryResponse(status, REDIS_ASIC_STATE_COMMAND_FLUSHRESPONSE, {});
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processClearStatsEvent(
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -887,9 +816,7 @@ sai_status_t Syncd::processClearStatsEvent(
 
         sai_status_t status = SAI_STATUS_INVALID_OBJECT_ID;
 
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH( seq, 
-        m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE) );
+        sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_GETRESPONSE, {}, sequenceNumber);
 
         return status;
     }
@@ -898,10 +825,7 @@ sai_status_t Syncd::processClearStatsEvent(
     {
         SWSS_LOG_WARN("VID to RID translation failure: %s", key.c_str());
         sai_status_t status = SAI_STATUS_INVALID_OBJECT_ID;
-
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH( seq,
-        m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE) );
+        sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_GETRESPONSE, {}, sequenceNumber);
         return status;
     }
 
@@ -928,17 +852,14 @@ sai_status_t Syncd::processClearStatsEvent(
             (uint32_t)counter_ids.size(),
             counter_ids.data());
 
-// multi thread syncd -> SEQ_EXEC_PUSH
-    SEQ_EXEC_PUSH( seq,
-    m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE) );
+    sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_GETRESPONSE, {}, sequenceNumber);
 
     return status;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processGetStatsEvent(
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -952,9 +873,9 @@ sai_status_t Syncd::processGetStatsEvent(
         SWSS_LOG_WARN("GET STATS api can't be used on %s since it's created in INIT_VIEW mode", key.c_str());
 
         sai_status_t status = SAI_STATUS_INVALID_OBJECT_ID;
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH( seq,
-        m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE) );
+
+        sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_GETRESPONSE, {}, sequenceNumber);
+
         return status;
     }
 
@@ -1002,22 +923,18 @@ sai_status_t Syncd::processGetStatsEvent(
         }
     }
 
-// multi thread syncd -> SEQ_EXEC_PUSH
-    SEQ_EXEC_PUSH( seq,
-    m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE) );
-
+    sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_GETRESPONSE, entry, sequenceNumber);
 
     return status;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processBulkQuadEvent(
         _In_ sai_common_api_t api,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_INFO("seq=%d, api=%s, key=%s, op=%s", seq, sai_serialize_common_api(api).c_str(), kfvKey(kco).c_str(), kfvOp(kco).c_str());
+    SWSS_LOG_INFO("seq=%d, api=%s, key=%s, op=%s", sequenceNumber, sai_serialize_common_api(api).c_str(), kfvKey(kco).c_str(), kfvOp(kco).c_str());
 
     const std::string& key = kfvKey(kco); // objectType:count
 
@@ -1077,8 +994,7 @@ sai_status_t Syncd::processBulkQuadEvent(
 
     if (isInitViewMode())
     {
-// multi thread syncd -> seq
-        return processBulkQuadEventInInitViewMode(objectType, objectIds, api, attributes, strAttributes, seq);
+        return processBulkQuadEventInInitViewMode(objectType, objectIds, api, attributes, strAttributes, sequenceNumber);
     }
 
     if (api != SAI_COMMON_API_BULK_GET)
@@ -1098,24 +1014,89 @@ sai_status_t Syncd::processBulkQuadEvent(
 
     if (info->isobjectid)
     {
-// multi thread syncd -> seq
-        return processBulkOid(objectType, objectIds, api, attributes, strAttributes, seq);
+        return processBulkOid(objectType, objectIds, api, attributes, strAttributes, sequenceNumber);
     }
     else
     {
-// multi thread syncd -> seq
-        return processBulkEntry(objectType, objectIds, api, attributes, strAttributes, seq);
+        return processBulkEntry(objectType, objectIds, api, attributes, strAttributes, sequenceNumber);
     }
 }
 
-// multi thread syncd -> seq
+void Syncd::sendApiResponseUpdateRedisQuadEvent(
+        _In_ sai_common_api_t api,
+        _In_ sai_status_t status,
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ int sequenceNumber)
+{
+    syncUpdateRedisQuadEvent(status, api, kco);
+    sendApiResponse(api, status);
+
+}
+
+void Syncd::sendGetResponseUpdateRedisQuadEvent(
+        _In_ sai_object_type_t objectType,
+        _In_ const std::string& strObjectId,
+        _In_ sai_object_id_t switchVid,
+        _In_ sai_status_t status,
+        _In_ uint32_t attr_count,
+        //_In_ sai_attribute_t *attr_list,
+        _In_ std::shared_ptr<sai_attribute_t[]> attr_list,
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ sai_common_api_t api)
+{
+    syncUpdateRedisQuadEvent(status, api, kco);
+    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, std::move(attr_list));
+}
+
+void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
+    _In_ sai_common_api_t api,
+    _In_ sai_status_t status,
+	_In_ uint32_t object_count,
+    _In_ sai_object_type_t objectType,
+    _In_ std::vector<sai_status_t> statuses,
+    _In_ const std::vector<std::string>& objectIds,
+    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+{
+    SWSS_LOG_ENTER();
+
+    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
+
+    sendApiResponse(api, status, object_count, statuses.data());
+}
+
+void Syncd::sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
+    _In_ sai_common_api_t api,
+    _In_ sai_status_t status,
+    _In_ uint32_t object_count,
+    _In_ sai_object_type_t objectType,
+    _In_ std::vector<sai_status_t> statuses,
+    _In_ const std::vector<std::string>& objectIds,
+    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+{
+    SWSS_LOG_ENTER();
+
+    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
+
+    for (auto& str: objectIds)
+    {
+        sai_object_id_t objectVid;
+        sai_deserialize_object_id(str, objectVid);
+
+        // in init view mode insert every created object except switch
+
+        m_createdInInitView.insert(objectVid);
+    }
+
+    sendApiResponse(api, status, object_count, statuses.data());
+}
+
 sai_status_t Syncd::processBulkQuadEventInInitViewMode(
         _In_ sai_object_type_t objectType,
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>>& attributes,
         _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -1136,13 +1117,12 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
 
             if (info->isnonobjectid)
             {
+                LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+                auto lambda = [=]() {
+                    sendApiResponseUpdateRedisBulkQuadEvent(api, SAI_STATUS_SUCCESS,(uint32_t)statuses.size(), objectType, statuses, objectIds, strAttributes);
+                };
+                sendStausAdvancedResponseSequence(sequenceNumber,lambda);
                 
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_STATUS
-                SEQ_EXEC_PUSH( seq,
-                sendApiResponse(api, SAI_STATUS_SUCCESS,  SEQ_STATUS( statuses.size(), statuses.data())) );
-
-                syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
-
                 return SAI_STATUS_SUCCESS;
             }
 
@@ -1157,23 +1137,12 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
                             sai_serialize_object_type(objectType).c_str());
 
                 default:
-
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_STATUS
-                    SEQ_EXEC_PUSH( seq,
-                    sendApiResponse(api, SAI_STATUS_SUCCESS, SEQ_STATUS ( statuses.size(), statuses.data()) ));
-
-                    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
-
-                    for (auto& str: objectIds)
-                    {
-                        sai_object_id_t objectVid;
-                        sai_deserialize_object_id(str, objectVid);
-
-                        // in init view mode insert every created object except switch
-
-                        m_createdInInitView.insert(objectVid);
-                    }
-             
+                    LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion to Lambda {}", sequenceNumber);
+                    auto lambda = [=]() {
+                        sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(api, SAI_STATUS_SUCCESS, (uint32_t)statuses.size(), objectType, statuses, objectIds, strAttributes);
+                    };
+                    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
+                   
                     return SAI_STATUS_SUCCESS;
             }
 
@@ -1955,14 +1924,13 @@ sai_status_t Syncd::processBulkSetEntry(
     return status;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processBulkEntry(
         _In_ sai_object_type_t objectType,
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
         _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2000,10 +1968,11 @@ sai_status_t Syncd::processBulkEntry(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_STATUS
-            SEQ_EXEC_PUSH( seq,
-            sendApiResponse(api, all, SEQ_STATUS(objectIds.size(), statuses.data())) );
-            syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
+            LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+            auto lambda = [=]() {
+                sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+            };
+            sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
             return all;
         }
@@ -2126,13 +2095,11 @@ sai_status_t Syncd::processBulkEntry(
 
         statuses[idx] = status;
     }
-
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_STATUS
-    SEQ_EXEC_PUSH( seq,
-    sendApiResponse(api, all, SEQ_STATUS(objectIds.size(), statuses.data())) );
-
-    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
-
+    LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+    auto lambda = [=]() {
+        sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+    };
+    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
   
     return all;
 }
@@ -2320,14 +2287,13 @@ sai_status_t Syncd::processBulkOidRemove(
     return status;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processBulkOid(
         _In_ sai_object_type_t objectType,
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
         _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes, 
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2363,10 +2329,11 @@ sai_status_t Syncd::processBulkOid(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_STATUS
-            SEQ_EXEC_PUSH( seq, 
-            sendApiResponse(api, all, SEQ_STATUS(objectIds.size(), statuses.data())) );
-            syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
+            LogToModuleFile("1", "1.add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+            auto lambda = [=]() {
+                sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+            };
+            sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
             return all;
         }
@@ -2417,23 +2384,23 @@ sai_status_t Syncd::processBulkOid(
 
         statuses[idx] = status;
     }
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_STATUS
-    SEQ_EXEC_PUSH( seq,
-    sendApiResponse(api, all, SEQ_STATUS(objectIds.size(), statuses.data())) );
-
-    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
+    LogToModuleFile("1", "2. add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+    auto lambda = [=]() {
+        sendApiResponseUpdateRedisBulkQuadEvent(api, all,(uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+    };
+    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
     return all;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processQuadEventInInitViewMode(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
         _In_ sai_common_api_t api,
         _In_ uint32_t attr_count,
         _In_ sai_attribute_t *attr_list,
-        _In_ sequencer::seq_t seq)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2447,20 +2414,16 @@ sai_status_t Syncd::processQuadEventInInitViewMode(
     switch (api)
     {
         case SAI_COMMON_API_CREATE:
-// multi thread syncd -> seq
-            return processQuadInInitViewModeCreate(objectType, strObjectId, attr_count, attr_list, seq);
+            return processQuadInInitViewModeCreate(objectType, strObjectId, attr_count, attr_list, api, kco, sequenceNumber);
 
         case SAI_COMMON_API_REMOVE:
-// multi thread syncd -> seq
-            return processQuadInInitViewModeRemove(objectType, strObjectId, seq);
+            return processQuadInInitViewModeRemove(objectType, strObjectId, api, kco, sequenceNumber);
 
         case SAI_COMMON_API_SET:
-// multi thread syncd -> seq
-            return processQuadInInitViewModeSet(objectType, strObjectId, attr_list, seq);
+            return processQuadInInitViewModeSet(objectType, strObjectId, attr_list, api, kco, sequenceNumber);
 
         case SAI_COMMON_API_GET:
-// multi thread syncd -> seq
-            return processQuadInInitViewModeGet(objectType, strObjectId, attr_count, attr_list, seq);
+            return processQuadInInitViewModeGet(objectType, strObjectId, attr_count, attr_list, api, kco, sequenceNumber);
 
         default:
 
@@ -2468,13 +2431,14 @@ sai_status_t Syncd::processQuadEventInInitViewMode(
     }
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processQuadInInitViewModeCreate(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
         _In_ uint32_t attr_count,
         _In_ sai_attribute_t *attr_list,
-        _In_ sequencer::seq_t seq)
+        _In_ sai_common_api_t api,
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2519,18 +2483,21 @@ sai_status_t Syncd::processQuadInInitViewModeCreate(
             m_createdInInitView.insert(objectVid);
         }
     }
-// multi thread syncd -> SEQ_EXEC_PUSH
-    SEQ_EXEC_PUSH(seq, 
-    sendApiResponse(SAI_COMMON_API_CREATE, SAI_STATUS_SUCCESS) );
+    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    auto lambda = [=]() {
+        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
+    };
+    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
     return SAI_STATUS_SUCCESS;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processQuadInInitViewModeRemove(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
-        _In_ sequencer::seq_t seq)
+        _In_ sai_common_api_t api,
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,        
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2584,36 +2551,43 @@ sai_status_t Syncd::processQuadInInitViewModeRemove(
 
         m_initViewRemovedVidSet.insert(objectVid);
     }
-    
-// multi thread syncd -> SEQ_EXEC_PUSH
-    SEQ_EXEC_PUSH(seq, 
-    sendApiResponse(SAI_COMMON_API_REMOVE, SAI_STATUS_SUCCESS) );
+    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    auto lambda = [=]() {
+        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
+    };
+    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
     return SAI_STATUS_SUCCESS;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processQuadInInitViewModeSet(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
-        _In_ sai_attribute_t *attr,    
-        _In_ sequencer::seq_t seq)
+        _In_ sai_attribute_t *attr,
+        _In_ sai_common_api_t api,
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,        
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
-// multi thread syncd -> SEQ_EXEC_PUSH
-    SEQ_EXEC_PUSH(seq, 
-    sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS) );
-  
+
+    // we support SET api on all objects in init view mode
+    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    auto lambda = [=]() {
+        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
+    };
+    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
+
     return SAI_STATUS_SUCCESS;
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processQuadInInitViewModeGet(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
         _In_ uint32_t attr_count,
         _In_ sai_attribute_t *attr_list,
-        _In_ sequencer::seq_t seq)
+        _In_ sai_common_api_t api,
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,        
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2622,6 +2596,11 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
     auto info = sai_metadata_get_object_type_info(objectType);
 
     sai_object_id_t switchVid = SAI_NULL_OBJECT_ID;
+
+    std::shared_ptr<sai_attribute_t[]> newPtr(new sai_attribute_t[attr_count]);
+    
+    // Copy data from raw pointer to new memory
+    std::memcpy(newPtr.get(), attr_list, attr_count * sizeof(sai_attribute_t));
 
     if (info->isnonobjectid)
     {
@@ -2648,9 +2627,11 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
                     sai_serialize_object_type(objectType).c_str());
 
             status = SAI_STATUS_INVALID_OBJECT_ID;
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_ATTR
-            SEQ_EXEC_PUSH(seq,
-            sendGetResponse(objectType, strObjectId, switchVid, status,  SEQ_ATTR( attr_count, attr_list)) );
+            LogToModuleFile("1", "1. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+            auto lambda = [=]() {
+                sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
+            };
+            sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
             return status;
         }
@@ -2694,23 +2675,13 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
      * switch id, we could also have this method inside metadata to get meta
      * key.
      */
-
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_ATTR
-    SEQ_EXEC_PUSH(seq,
-    sendGetResponse(objectType, strObjectId, switchVid, status, SEQ_ATTR( attr_count, attr_list) ) );
+    LogToModuleFile("1", "2. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    auto lambda = [=]() {
+        sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
+    };
+    sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
     return status;
-}
-
-// multi thread syncd -> overloading In_ std::shared_ptr<sai_attribute_t[]> object_statuses
-void Syncd::sendApiResponse(
-        _In_ sai_common_api_t api,
-        _In_ sai_status_t status,
-        _In_ uint32_t object_count,
-        _In_ std::shared_ptr<sai_status_t[]> object_statuses,
-        _In_ bool isProtected)
-{
-    sendApiResponse(api, status, object_count, object_statuses.get());
 }
 
 void Syncd::sendApiResponse(
@@ -2720,6 +2691,7 @@ void Syncd::sendApiResponse(
         _In_ sai_status_t* object_statuses)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("sendApiResponse");
 
     /*
      * By default synchronous mode is disabled and can be enabled by command
@@ -2730,6 +2702,7 @@ void Syncd::sendApiResponse(
 
     if (!m_enableSyncMode)
     {
+        SWSS_LOG_NOTICE("sendApiResponse !m_enableSyncMode");
         return;
     }
 
@@ -2770,8 +2743,7 @@ void Syncd::sendApiResponse(
             sai_serialize_common_api(api).c_str(),
             strStatus.c_str());
     
-    //TODO PROTECT 
-    m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
+    sendStatusAndEntryResponse(status, REDIS_ASIC_STATE_COMMAND_GETRESPONSE, entry);
 
     SWSS_LOG_INFO("response for %s api was send",
             sai_serialize_common_api(api).c_str());
@@ -2797,13 +2769,12 @@ void Syncd::processFlexCounterGroupEvent( // TODO must be moved to go via ASIC c
     processFlexCounterGroupEvent(groupName, op, values, false);
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processFlexCounterGroupEvent(
         _In_ const std::string &groupName,
         _In_ const std::string &op,
         _In_ const std::vector<swss::FieldValueTuple> &values,
         _In_ bool fromAsicChannel,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2830,9 +2801,11 @@ sai_status_t Syncd::processFlexCounterGroupEvent(
 
     if (fromAsicChannel)
     {
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH(seq,
-        sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS) );        
+        LogToModuleFile("1", "add sendApiResponse to Lambda sequenceNumber {}", sequenceNumber);
+        auto lambda = [=]() {
+            sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
+        };
+        sendStausAdvancedResponseSequence(sequenceNumber,lambda);        
     }
 
     return SAI_STATUS_SUCCESS;
@@ -2858,13 +2831,12 @@ void Syncd::processFlexCounterEvent( // TODO must be moved to go via ASIC channe
     processFlexCounterEvent(key, op, values, false);
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processFlexCounterEvent(
         _In_ const std::string &key,
         _In_ const std::string &op,
         _In_ const std::vector<swss::FieldValueTuple> &values,        
         _In_ bool fromAsicChannel,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -2876,9 +2848,11 @@ sai_status_t Syncd::processFlexCounterEvent(
 
         if (fromAsicChannel)
         {
-  // multi thread syncd -> SEQ_EXEC_PUSH
-            SEQ_EXEC_PUSH(seq,
-            sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_FAILURE) );
+            LogToModuleFile("1", "add sendApiResponse to Lambda {}", sequenceNumber);
+            auto lambda = [=]() {
+                sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_FAILURE);
+            };
+            sendStausAdvancedResponseSequence(sequenceNumber,lambda); 
         }
 
         return SAI_STATUS_FAILURE; // if key is invalid there is no need to process this event again
@@ -2932,9 +2906,11 @@ sai_status_t Syncd::processFlexCounterEvent(
 
     if (fromAsicChannel)
     {
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH(seq,
-        sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS) ); 
+        LogToModuleFile("1", "2. add sendApiResponse to Lambda sequenceNumber {}", sequenceNumber);
+        auto lambda = [=]() {
+            sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
+        };
+        sendStausAdvancedResponseSequence(sequenceNumber,lambda); 
     }
 
     return SAI_STATUS_SUCCESS;
@@ -3137,7 +3113,6 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
     timer.inc(statuses.size());
 }
 
-// multi thread syncd -> pushRingBuffer
 void Syncd::pushRingBuffer(SyncdRing* ringBuffer, AnyTask&& func)
 {
     SWSS_LOG_ENTER();
@@ -3154,14 +3129,14 @@ void Syncd::pushRingBuffer(SyncdRing* ringBuffer, AnyTask&& func)
     }
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processQuadEvent(
         _In_ sai_common_api_t api,
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
-   
+    LogToModuleFile("1", "{} api={}, key={}, op={}",  std::to_string(sequenceNumber), sai_serialize_common_api(api), kfvKey(kco), kfvOp(kco));
+
     const std::string& key = kfvKey(kco);
     const std::string& op = kfvOp(kco);
 
@@ -3214,10 +3189,7 @@ sai_status_t Syncd::processQuadEvent(
 
     if (isInitViewMode())
     {
-// multi thread syncd -> seq
-        sai_status_t status = processQuadEventInInitViewMode(metaKey.objecttype, strObjectId, api, attr_count, attr_list, seq);
-
-        syncUpdateRedisQuadEvent(status, api, kco);
+        sai_status_t status = processQuadEventInInitViewMode(metaKey.objecttype, strObjectId, api, attr_count, attr_list, kco, sequenceNumber);
 
         return status;
     }
@@ -3274,19 +3246,28 @@ sai_status_t Syncd::processQuadEvent(
         }
 
         // extract switch VID from any object type
-        
+        std::shared_ptr<sai_attribute_t[]> newPtr(new sai_attribute_t[attr_count]);
+    
+        // Copy data from raw pointer to new memory
+        std::memcpy(newPtr.get(), attr_list, attr_count * sizeof(sai_attribute_t));
+
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
-        
-// multi thread syncd -> SEQ_EXEC_PUSH + SEQ_ATTR
-        SEQ_EXEC_PUSH( seq, 
-        sendGetResponse(metaKey.objecttype, strObjectId, switchVid, status, SEQ_ATTR(attr_count, attr_list)) );
+        LogToModuleFile("1", "add sendGetResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        auto lambda = [=]() {
+            sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
+        };
+        sendStausAdvancedResponseSequence(sequenceNumber,lambda);
+
+        return SAI_STATUS_SUCCESS;
+
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
-        
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH( seq, 
-        sendApiResponse(api, status) );
+        LogToModuleFile("1", "1. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+	    auto lambda = [=]() {
+	         sendApiResponseUpdateRedisQuadEvent(api, status, kco, sequenceNumber);
+	    };
+	    sendStausAdvancedResponseSequence(sequenceNumber,lambda); 
 
         if (info->isobjectid && api == SAI_COMMON_API_SET)
         {
@@ -3315,12 +3296,12 @@ sai_status_t Syncd::processQuadEvent(
     }
     else // non GET api, status is SUCCESS
     {
-// multi thread syncd -> SEQ_EXEC_PUSH
-        SEQ_EXEC_PUSH( seq, 
-        sendApiResponse(api, status) );
+        LogToModuleFile("1", "2. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        auto lambda = [=]() {
+            sendApiResponseUpdateRedisQuadEvent(api, status, kco, sequenceNumber);
+    	};
+    	sendStausAdvancedResponseSequence(sequenceNumber,lambda); 
     }
-
-    syncUpdateRedisQuadEvent(status, api, kco);
 
     return status;
 }
@@ -3513,16 +3494,26 @@ sai_status_t Syncd::processOidRemove(
 
             sai_object_id_t switchVid = VidManager::switchIdQuery(objectVid);
 
+            LogToModuleFile("1", "processOidRemove start removing...");
             if (m_switches.at(switchVid)->isDiscoveredRid(rid))
             {
+                LogToModuleFile("1", "try removeExistingObjectReference");
                 m_switches.at(switchVid)->removeExistingObjectReference(rid);
+                LogToModuleFile("1", "success removeExistingObjectReference");
             }
+
+            LogToModuleFile("1", "processOidRemove removed isDiscoveredRid");
 
             if (objectType == SAI_OBJECT_TYPE_PORT)
             {
+                LogToModuleFile("1", "try postPortRemove");
                 m_switches.at(switchVid)->postPortRemove(rid);
+                LogToModuleFile("1", "success postPortRemove");
             }
 
+            LogToModuleFile("1", "processOidRemove removed postPortRemove");
+
+            SWSS_LOG_NOTICE("processOidRemove finish removing");
         }
     }
 
@@ -3691,25 +3682,14 @@ void Syncd::loadProfileMap()
     }
 }
 
-// multi thread syncd -> overloading std::shared_ptr<sai_attribute_t[]> attr_list
 void Syncd::sendGetResponse(
         _In_ sai_object_type_t objectType,
         _In_ const std::string& strObjectId,
         _In_ sai_object_id_t switchVid,
         _In_ sai_status_t status,
         _In_ uint32_t attr_count,
+        //_In_ sai_attribute_t *attr_list
         _In_ std::shared_ptr<sai_attribute_t[]> attr_list)
-{
-    sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, attr_list.get());
-}
-
-void Syncd::sendGetResponse(
-        _In_ sai_object_type_t objectType,
-        _In_ const std::string& strObjectId,
-        _In_ sai_object_id_t switchVid,
-        _In_ sai_status_t status,
-        _In_ uint32_t attr_count,
-        _In_ sai_attribute_t *attr_list)
 {
     SWSS_LOG_ENTER();
 
@@ -3717,7 +3697,7 @@ void Syncd::sendGetResponse(
 
     if (status == SAI_STATUS_SUCCESS)
     {
-        m_translator->translateRidToVid(objectType, switchVid, attr_count, attr_list);
+        m_translator->translateRidToVid(objectType, switchVid, attr_count, attr_list.get());
 
         /*
          * Normal serialization + translate RID to VID.
@@ -3726,14 +3706,14 @@ void Syncd::sendGetResponse(
         entry = SaiAttributeList::serialize_attr_list(
                 objectType,
                 attr_count,
-                attr_list,
+                attr_list.get(),
                 false);
 
         /*
          * All oid values here are VIDs.
          */
 
-        snoopGetResponse(objectType, strObjectId, attr_count, attr_list);
+        snoopGetResponse(objectType, strObjectId, attr_count, attr_list.get());
     }
     else if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
@@ -3750,7 +3730,7 @@ void Syncd::sendGetResponse(
         entry = SaiAttributeList::serialize_attr_list(
                 objectType,
                 attr_count,
-                attr_list,
+                attr_list.get(),
                 true);
     }
     else
@@ -3774,8 +3754,8 @@ void Syncd::sendGetResponse(
      * type and object id, only get status is required to be returned.  Get
      * response will not put any data to table, only queue is used.
      */
-    // TODO PROTECT
-    m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
+
+    sendStatusAndEntryResponse(status, REDIS_ASIC_STATE_COMMAND_GETRESPONSE, entry);
 
     SWSS_LOG_INFO("response for GET api was send");
 }
@@ -4072,10 +4052,9 @@ void Syncd::inspectAsic()
     }
 }
 
-// multi thread syncd -> seq
 sai_status_t Syncd::processNotifySyncd(
         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -4093,16 +4072,15 @@ sai_status_t Syncd::processNotifySyncd(
             SWSS_LOG_ERROR("Error in executing SAI failure dump %s", ret_str.c_str());
             status = SAI_STATUS_FAILURE;
         }
-// multi thread syncd -> seq
-        sendNotifyResponse(status, seq);
+        sendNotifyResponse(status, sequenceNumber);
         return status;
     }
 
     if (!m_commandLineOptions->m_enableTempView)
     {
         SWSS_LOG_NOTICE("received %s, ignored since TEMP VIEW is not used, returning success", key.c_str());
-// multi thread syncd -> seq
-        sendNotifyResponse(SAI_STATUS_SUCCESS, seq);
+
+        sendNotifyResponse(SAI_STATUS_SUCCESS, sequenceNumber);
 
         return SAI_STATUS_SUCCESS;
     }
@@ -4163,8 +4141,8 @@ sai_status_t Syncd::processNotifySyncd(
         {
             SWSS_LOG_THROW("unknown operation: %s", key.c_str());
         }
-// multi thread syncd -> seq
-        sendNotifyResponse(status, seq);
+
+        sendNotifyResponse(status, sequenceNumber);
 
         return status;
     }
@@ -4185,8 +4163,8 @@ sai_status_t Syncd::processNotifySyncd(
         // NOTE: Currently as WARN to be easier to spot, later should be NOTICE.
 
         SWSS_LOG_WARN("syncd switched to INIT VIEW mode, all op will be saved to TEMP view");
-// multi thread syncd -> seq
-        sendNotifyResponse(SAI_STATUS_SUCCESS, seq);
+
+        sendNotifyResponse(SAI_STATUS_SUCCESS, sequenceNumber);
     }
     else if (redisNotifySyncd == SAI_REDIS_NOTIFY_SYNCD_APPLY_VIEW)
     {
@@ -4210,13 +4188,12 @@ sai_status_t Syncd::processNotifySyncd(
              * it will not be processed until get response timeout will hit.
              */
 
-// multi thread syncd -> seq
-            sendNotifyResponse(SAI_STATUS_FAILURE, seq);
+            sendNotifyResponse(SAI_STATUS_FAILURE, sequenceNumber);
 
             throw;
         }
-// multi thread syncd -> seq
-        sendNotifyResponse(status, seq);
+
+        sendNotifyResponse(status, sequenceNumber);
 
         if (status == SAI_STATUS_SUCCESS)
         {
@@ -4254,14 +4231,13 @@ sai_status_t Syncd::processNotifySyncd(
 
         inspectAsic();
 
-// multi thread syncd -> seq
-        sendNotifyResponse(SAI_STATUS_SUCCESS, seq);
+        sendNotifyResponse(SAI_STATUS_SUCCESS, sequenceNumber);
     }
     else
     {
         SWSS_LOG_ERROR("unknown operation: %s", key.c_str());
-// multi thread syncd -> seq
-        sendNotifyResponse(SAI_STATUS_NOT_IMPLEMENTED, seq);
+
+        sendNotifyResponse(SAI_STATUS_NOT_IMPLEMENTED, sequenceNumber);
 
         SWSS_LOG_THROW("notify syncd %s operation failed", key.c_str());
     }
@@ -4269,10 +4245,9 @@ sai_status_t Syncd::processNotifySyncd(
     return SAI_STATUS_SUCCESS;
 }
 
-// multi thread syncd -> seq
 void Syncd::sendNotifyResponse(
         _In_ sai_status_t status,
-        _In_ sequencer::seq_t seq)
+        _In_ int sequenceNumber)
 {
     SWSS_LOG_ENTER();
 
@@ -4282,9 +4257,7 @@ void Syncd::sendNotifyResponse(
 
     SWSS_LOG_INFO("sending response: %s", strStatus.c_str());
 
-// multi thread syncd -> SEQ_EXEC_PUSH + std::move
-    SEQ_EXEC_PUSH( seq, 
-    m_selectableChannel->set(strStatus, std::move(entry), REDIS_ASIC_STATE_COMMAND_NOTIFY) );
+    sendStausResponseSequence(status, REDIS_ASIC_STATE_COMMAND_NOTIFY, entry, sequenceNumber);
 
 }
 
@@ -5361,7 +5334,6 @@ static void timerWatchdogCallback(
     SWSS_LOG_ERROR("main loop execution exceeded %ld ms", span/1000);
 }
 
-// multi thread syncd  -> getObjectTypeByOperation
 void Syncd::getObjectTypeByOperation(
     _In_ swss::KeyOpFieldsValuesTuple kco,
     _Out_ sai_object_type_t &objectType)
@@ -5407,8 +5379,6 @@ void Syncd::getObjectTypeByOperation(
     }
 }
 
-
-// multi thread syncd  -> findOperationGroup
 // Internal function to find and log operation group details
 bool Syncd::findOperationGroup(
     const std::string& valueStr,
@@ -5436,7 +5406,6 @@ bool Syncd::findOperationGroup(
     return found;
 }
 
-// multi thread syncd -> getApiRingBuffer 
 void Syncd::getApiRingBuffer(
     _In_ const swss::KeyOpFieldsValuesTuple &kco,
     _Out_ SyncdRing*& ringBuffer)
@@ -5528,12 +5497,16 @@ void Syncd::run()
 
     while (runMainLoop)
     {
+        // add sequence number to log messages
         try
         {
             swss::Selectable *sel = NULL;
 
+            LogToModuleFile("1", "before select");
             int result = s->select(&sel);
+            LogToModuleFile("1", "after select");
 
+            //restart query sequencer
             if (sel == m_restartQuery.get())
             {
                 /*
@@ -5545,12 +5518,12 @@ void Syncd::run()
                  */
 
                 SWSS_LOG_NOTICE("is asic queue empty: %d", m_selectableChannel->empty());
-       
+                LogToModuleFile("1", "is asic queue empty start");
                 while (!m_selectableChannel->empty())
                 {
                     processEvent(*m_selectableChannel.get());
                 }
-            
+                LogToModuleFile("1", "is asic queue empty end");
 
                 SWSS_LOG_NOTICE("drained queue");
 
@@ -5593,7 +5566,7 @@ void Syncd::run()
                     if (status != SAI_STATUS_SUCCESS)
                     {
                         SWSS_LOG_ERROR("Failed to set SAI_SWITCH_ATTR_FAST_API_ENABLE=true: %s for express pre-shutdown. Fall back to cold restart",
-                        sai_serialize_status(status).c_str());
+                    sai_serialize_status(status).c_str());
 
                         shutdownType = SYNCD_RESTART_TYPE_COLD;
 
@@ -5628,16 +5601,58 @@ void Syncd::run()
             }
             else if (sel == m_flexCounter.get())
             {
-// multi thread syncd -> SEQ_EXEC
-                SEQ_EXEC(processFlexCounterEvent(*(swss::ConsumerTable*)sel) );
+                int sequenceNumber;
+                if(!!m_sequencer->allocateSequenceNumber(&sequenceNumber))
+                {
+                    LogToModuleFile("1", "Failed to allocate sequence number: {}", std::to_string(sequenceNumber));
+                    //todo: handle wait until sequence number is available with timeout 
+                }
+                else {
+                    LogToModuleFile("1", "Allocated sequence number: ", std::to_string(sequenceNumber));
+                }
+                //directly to sequencer
+                auto lambda = [=](){
+                    LogToModuleFile("1", "inside lambda, start m_flexCounter");
+                    processFlexCounterEvent(*(swss::ConsumerTable*)sel);
+                    LogToModuleFile("1", "inside lambda, end m_flexCounter");
+                };
+
+                if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambda))
+                {
+                    LogToModuleFile("1", "m_flexCounter failed to execute function in sequence, sequence number: {}", std::to_string(sequenceNumber));
+                }
+                LogToModuleFile("1", "end executeFuncInSequence sequenceNumber {} processFlexCounterEvent",sequenceNumber);
             }
             else if (sel == m_flexCounterGroup.get())
             {
-// multi thread syncd -> SEQ_EXEC
-                SEQ_EXEC( processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel) );
+                int sequenceNumber;
+                if(!!m_sequencer->allocateSequenceNumber(&sequenceNumber))
+                {
+                    LogToModuleFile("1", "Failed to allocate sequence number");
+                    //todo: handle wait until sequence number is available with timeout 
+                }
+                else {
+                    LogToModuleFile("1", "Allocated sequence number: ", std::to_string(sequenceNumber));
+                }
+
+				LogToModuleFile("1", "BEFORE PUSH INTO RING BUFFER sequence number: ",std::to_string(sequenceNumber));
+				
+                //directly to sequencer
+                auto lambda = [=](){
+                    LogToModuleFile("1", "inside lambda, start m_flexCounterGroup");
+                    processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
+                    LogToModuleFile("1", "inside lambda, end m_flexCounterGroup");
+                };
+
+                if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambda))
+                {
+                    LogToModuleFile("1", "m_flexCounterGroup failed to execute function in sequence, sequence number: {}",  std::to_string(sequenceNumber));
+                }
+                LogToModuleFile("1", "end executeFuncInSequence  sequenceNumber {} processFlexCounterGroupEvent",sequenceNumber);
             }
             else if (sel == m_selectableChannel.get())
             {
+                LogToModuleFile("1", "m_selectableChannel.get()");
                 processEvent(*m_selectableChannel.get());
             }
             else
@@ -5746,3 +5761,65 @@ syncd_restart_type_t Syncd::handleRestartQuery(
     return RequestShutdownCommandLineOptions::stringToRestartType(op);
 }
 
+void Syncd::sendStatusAndEntryResponse(
+    _In_ sai_status_t status,
+    _In_ const std::string& commandType,
+    _In_ const std::vector<swss::FieldValueTuple>& entry)
+{
+    SWSS_LOG_ENTER();
+
+    std::string strStatus = sai_serialize_status(status);
+
+    LogToModuleFile("1", "sending response: {} with commandType: {}", strStatus.c_str(), commandType.c_str());
+    SWSS_LOG_INFO("sending response: %s with commandType: %s", strStatus.c_str(), commandType.c_str());
+
+    m_selectableChannel->set(strStatus, entry, commandType);
+}
+void Syncd::sendStausResponseSequence(
+
+    _In_ sai_status_t status,
+    _In_ const std::string& commandType,
+    _In_ const std::vector<swss::FieldValueTuple>& entry,
+    _In_ int sequenceNumber)
+{
+    SWSS_LOG_ENTER();
+
+    if(sequenceNumber != INVALID_SEQUENCE_NUMBER) {
+        // If the response is to be sequenced, then add it to the sequencer
+        LogToModuleFile("1", "add sendStatusAndEntryResponse to lambda with sequenceNumber {} ", sequenceNumber);
+        auto lambda = [=]() {
+            sendStatusAndEntryResponse(status, commandType, entry);
+        };
+        if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambda))
+        {
+            LogToModuleFile("1", "failed to execute function in sequence, sequence number: {}",std::to_string(sequenceNumber));
+        }
+        LogToModuleFile("1", "end sendStausResponseSequence  sequenceNumber {}",sequenceNumber);
+    }
+    else {
+        // If the response is not to be sequenced, then send it directly
+        LogToModuleFile("1", "send sendStatusAndEntryResponse without sequencer");
+        sendStatusAndEntryResponse(status, commandType, entry);
+    }
+}
+
+void Syncd::sendStausAdvancedResponseSequence(
+        _In_ int sequenceNumber,
+        std::function<void()> lambdaFunc)
+{
+    SWSS_LOG_ENTER();
+
+    if(sequenceNumber != INVALID_SEQUENCE_NUMBER) {
+        LogToModuleFile("1", "valid sequence number {}", sequenceNumber);
+        if(!m_sequencer->executeFuncInSequence(sequenceNumber, lambdaFunc))
+        {
+            LogToModuleFile("1", "failed to execute function in sequence, sequence number:", std::to_string(sequenceNumber));
+        }
+        LogToModuleFile("1", "end sendStausAdvancedResponseSequence sequenceNumber {}",sequenceNumber);
+    }
+    else {
+        // If the response is not to be sequenced, then send it directly
+        LogToModuleFile("1", "execute func without sequencer");
+        lambdaFunc();
+    }
+}

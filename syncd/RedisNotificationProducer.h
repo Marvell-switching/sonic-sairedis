@@ -31,6 +31,8 @@ namespace syncd
 
             std::shared_ptr<swss::NotificationProducer> m_notificationProducer;
             
+            bool m_protected;
+
             std::shared_ptr<std::mutex> m_mutex;
     };
 }

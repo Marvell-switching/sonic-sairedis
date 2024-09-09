@@ -64,6 +64,8 @@ namespace sairedis
 
             bool m_modifyRedis;
 
+            bool m_protected;
+
             std::shared_ptr<std::mutex> m_mutex;
     };
 }

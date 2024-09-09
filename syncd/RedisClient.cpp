@@ -11,17 +11,20 @@
 #include "Logger.h"
 
 #define MY_LOCK() \
-if(m_mutex) \
+if(m_protected) \
 { \
+    LogToModuleFile("1", "before MY_LOCK()"); \
     m_mutex->lock(); \
+    LogToModuleFile("1", "after MY_LOCK()"); \
 } 
 
 #define MY_UNLOCK() \
-if(m_mutex) \
+if(m_protected) \
 { \
+    LogToModuleFile("1", "before MY_UNLOCK()"); \
     m_mutex->unlock(); \
+    LogToModuleFile("1", "after MY_UNLOCK()"); \
 }
-
 using namespace syncd;
 
 // vid and rid maps contains objects from all switches
@@ -44,6 +47,14 @@ RedisClient::RedisClient(
 
     m_fdbFlushSha = swss::loadRedisScript(dbAsic.get(), fdbFlushLuaScript);
 
+    if(t_mutex != nullptr)
+    {
+        m_protected = true;
+    }
+    else
+    {
+        m_protected = false;
+    }
 }
 
 RedisClient::~RedisClient()
@@ -989,4 +1000,12 @@ void RedisClient::processFlushEvent(
         swss::RedisReply r(m_dbAsic.get(), command);
     }
     MY_UNLOCK();
+}
+
+
+swss::DBConnector *RedisClient::redis_get(){
+    MY_LOCK();
+    auto reply = m_dbAsic.get();
+    MY_UNLOCK();
+    return reply;
 }
