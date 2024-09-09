@@ -16,6 +16,7 @@
 #include <ctime>
 #include <thread>
 
+#define SYNCD_LOGGER_VER " V6 "
 #define MAX_LOG_SIZE    (10 *50 * 1024) /* 50 KB */
 #define ENABLE_LOGGING  0
 
@@ -63,7 +64,7 @@ static void writeToLogFile(const std::string& funcName, const std::string& fileN
     std::thread::id this_id = std::this_thread::get_id();
 
     // Write the timestamp, function name, and message to the log file
-    logFile << formatted_time << " V4 " << this_id << " " << funcName << ": " << message << std::endl;
+    logFile << formatted_time << SYNCD_LOGGER_VER << this_id << " " << funcName << ": " << message << std::endl;
 
     
     logFile.close();
