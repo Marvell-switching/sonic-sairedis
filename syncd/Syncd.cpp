@@ -58,7 +58,7 @@ using namespace std::placeholders;
         LogToModuleFile("1", "KCO op: {} key: {}", kfvOp(_kco).c_str(), kfvKey(_kco).c_str()); \
     }
 
-#define RB_PUSH(_func_call, _kco) \ 
+#define RB_PUSH(_func_call, _kco) \
     { \
             sequencer::seq_t _seq; \
             SyncdRing* _ringBuffer; \
