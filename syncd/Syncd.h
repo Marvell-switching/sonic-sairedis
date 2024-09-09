@@ -811,7 +811,7 @@ namespace syncd
                 };                 
 
 
-                std::array<int, 94> crudOperations1Enums = {
+                std::array<int, 93> crudOperations1Enums = {
                         SAI_OBJECT_TYPE_NULL,
                         SAI_OBJECT_TYPE_PORT,
                         SAI_OBJECT_TYPE_LAG,                        
@@ -894,7 +894,6 @@ namespace syncd
                         SAI_OBJECT_TYPE_SWITCH_TUNNEL,
                         SAI_OBJECT_TYPE_MY_SID_ENTRY,
                         SAI_OBJECT_TYPE_MY_MAC,
-                        SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP,
                         SAI_OBJECT_TYPE_IPSEC,
                         SAI_OBJECT_TYPE_IPSEC_PORT,
                         SAI_OBJECT_TYPE_IPSEC_SA,
@@ -909,7 +908,7 @@ namespace syncd
                         SAI_OBJECT_TYPE_POE_PORT
                 };
 
-                std::array<int, 16> crudOperations2Enums = {
+                std::array<int, 17> crudOperations2Enums = {
                         SAI_OBJECT_TYPE_VIRTUAL_ROUTER,
                         SAI_OBJECT_TYPE_NEXT_HOP,
                         SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
@@ -925,7 +924,8 @@ namespace syncd
                         SAI_OBJECT_TYPE_TUNNEL_MAP,
                         SAI_OBJECT_TYPE_TUNNEL,
                         SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
-                        SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY
+                        SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY,
+                        SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP
                 };
 
                 // Populate crudOperations1 using the enums array
