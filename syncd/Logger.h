@@ -17,7 +17,7 @@
 #include <thread>
 
 #define MAX_LOG_SIZE    (10 *50 * 1024) /* 50 KB */
-#define ENABLE_LOGGING  0
+#define ENABLE_LOGGING  1
 
 // Define a mutex for thread safety
 static std::mutex logMutex;

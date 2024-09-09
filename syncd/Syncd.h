@@ -618,7 +618,7 @@ namespace syncd
             std::map<std::string, OperationGroup> operationGroups;
             std::atomic<bool> ring_thread_exited{false};
 
-            void getApiRingBuffer(
+            bool getApiRingBuffer(
                         _In_ const swss::KeyOpFieldsValuesTuple &kco,
                         _Out_ SyncdRing*& ringBuffer);
                         

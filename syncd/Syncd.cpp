@@ -43,6 +43,7 @@
 using namespace syncd;
 using namespace saimeta;
 using namespace sairediscommon;
+using namespace sequencer;
 using namespace std::placeholders;
 
 
@@ -62,14 +63,16 @@ using namespace std::placeholders;
     { \
             sequencer::seq_t _seq; \
             SyncdRing* _ringBuffer; \
-            getApiRingBuffer(kco, _ringBuffer); \
-            sequencer::SequenceStatus _ret = m_sequencer->allocateSequenceNumber(&_seq);\
-            if (_ret != sequencer::SUCCESS) KCO_DEBUG(_kco); \
-            if ( _ringBuffer  ) { \
-                auto lambda = [=](){ _func_call(std::move(_kco), _seq); }; \
-                pushRingBuffer(_ringBuffer, lambda); \
-            } else { \
-                _func_call(_kco, _seq); \
+            bool api_ret = getApiRingBuffer(_kco, _ringBuffer); \
+            if (api_ret) { \
+                sequencer::SequenceStatus _ret = m_sequencer->allocateSequenceNumber(&_seq);\
+                if (_ret != sequencer::SUCCESS) KCO_DEBUG(_kco); \
+                if ( _ringBuffer  ) { \
+                    auto lambda = [=](){ _func_call(std::move(_kco), _seq); }; \
+                    pushRingBuffer(_ringBuffer, lambda); \
+                } else { \
+                    _func_call(_kco, _seq); \
+                } \
             } \
     }
 
@@ -122,10 +125,10 @@ using namespace std::placeholders;
     SEQ_EXEC_PUSH(_seq, _func_call) \
 }
 
-#define REDIS_PROTECT(_func_call)\
-    m_redis_mutex.lock();\
-    _func_call; \
-    m_redis_mutex.unlock();
+// #define REDIS_PROTECT(_func_call)\
+//     m_redis_mutex.lock();\
+//     _func_call; \
+//     m_redis_mutex.unlock();
 
 // multi thread syncd -> end 
 
@@ -197,7 +200,7 @@ Syncd::Syncd(
     m_profileIter = m_profileMap.begin();
 
     // we need STATE_DB ASIC_DB and COUNTERS_DB
-    m_dbAsic = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbAsic, 0);
+    m_dbAsic = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbAsic, 0, true);
     m_mdioIpcServer = std::make_shared<MdioIpcServer>(m_vendorSai, m_commandLineOptions->m_globalContext);
 
     if (m_contextConfig->m_zmqEnable)
@@ -213,31 +216,31 @@ Syncd::Syncd(
     else
     {
     // restore with no lock 
-        m_notifications = std::make_shared<RedisNotificationProducer>(m_contextConfig->m_dbAsic, m_redis_mutex);
+        m_notifications = std::make_shared<RedisNotificationProducer>(m_contextConfig->m_dbAsic);//, m_redis_mutex);
 
         m_enableSyncMode = m_commandLineOptions->m_redisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
 
         bool modifyRedis = m_enableSyncMode ? false : true;
 
 // multi thread syncd -> m_redis_mutex
-        m_redis_mutex = std::make_shared<std::mutex>();
+        // m_redis_mutex = std::make_shared<std::mutex>();
 // multi thread syncd -> m_redis_mutex
         m_selectableChannel = std::make_shared<sairedis::RedisSelectableChannel>(
                 m_dbAsic,
                 ASIC_STATE_TABLE,
                 REDIS_TABLE_GETRESPONSE,
                 TEMP_PREFIX,
-                modifyRedis,
-                m_redis_mutex);
+                modifyRedis);//,
+                // m_redis_mutex);
     }
 
 // multi thread syncd -> m_redis_mutex
-    m_client = std::make_shared<RedisClient>(m_dbAsic, m_redis_mutex);
+    m_client = std::make_shared<RedisClient>(m_dbAsic);//, m_redis_mutex);
 
 // multi thread syncd -> m_sequencer
     m_sequencer = std::make_shared<sequencer::Sequencer>();
 // multi thread syncd -> added m_redis_mutex to NotificationProcessor instead to  m_notifications
-    m_processor = std::make_shared<NotificationProcessor>(m_notifications, m_client, std::bind(&Syncd::syncProcessNotification, this, _1));
+    m_processor = std::make_shared<NotificationProcessor>(m_notifications, m_client, std::bind(&Syncd::syncProcessNotification, this, _1));//, m_redis_mutex);
     m_handler = std::make_shared<NotificationHandler>(m_processor);
 
     m_sn.onFdbEvent = std::bind(&NotificationHandler::onFdbEvent, m_handler.get(), _1, _2);
@@ -264,7 +267,7 @@ Syncd::Syncd(
 
     m_switchConfigContainer = std::make_shared<sairedis::SwitchConfigContainer>();
 // multi thread syncd -> m_redis_mutex
-    m_redisVidIndexGenerator = std::make_shared<sairedis::RedisVidIndexGenerator>(m_dbAsic, REDIS_KEY_VIDCOUNTER, m_redis_mutex );
+    m_redisVidIndexGenerator = std::make_shared<sairedis::RedisVidIndexGenerator>(m_dbAsic, REDIS_KEY_VIDCOUNTER);//, m_redis_mutex );
 
     m_virtualObjectIdManager =
         std::make_shared<sairedis::VirtualObjectIdManager>(
@@ -5437,7 +5440,7 @@ bool Syncd::findOperationGroup(
 }
 
 // multi thread syncd -> getApiRingBuffer 
-void Syncd::getApiRingBuffer(
+bool Syncd::getApiRingBuffer(
     _In_ const swss::KeyOpFieldsValuesTuple &kco,
     _Out_ SyncdRing*& ringBuffer)
 {
@@ -5447,9 +5450,17 @@ void Syncd::getApiRingBuffer(
     auto& op = kfvOp(kco);    
 
     SWSS_LOG_DEBUG("op: %s key:%s", op.c_str(), key.c_str());
+    LogToModuleFile("1", "op: {} key: {}", op.c_str(), key.c_str());
 
     bool found = false;
     std::string valueStr = op.c_str();
+
+
+    if (key.length() == 0)
+    {
+        LogToModuleFile("1", "no elements in m_buffer");
+        return false;
+    }
 
     found = findOperationGroup(valueStr, ringBuffer);
 

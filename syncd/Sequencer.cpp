@@ -16,8 +16,11 @@ sequencer::SequenceStatus Sequencer::executeNextSequences() {
             status = sequencer::SUCCESS;
             break;  // Exit loop if the next sequence is not in the map
         }
+        LogToModuleFile("1", "Next sequence found in queue seq {}", next_seq_to_send);
+
+        seq_data_t entry  = seq_data->second;
         // Execute the stored lambda
-        callSeq(seq_data->second.response_lambda, seq_data->second.response_mutex);
+        callSeq(entry.response_lambda, entry.response_mutex);
         // Increment the number of executed tasks in sequence
         total_num_of_executed_tasks_in_sequence++; 
         current_num_of_executed_tasks_in_sequence++;
@@ -109,9 +112,13 @@ sequencer::SequenceStatus Sequencer::executeFuncInSequence(seq_t seq, std::funct
         executeNextSequences();
     } else {
         // If the sequence is not the next to send, store it in the map
-        responses[seq].response_lambda = response_lambda;    
-        responses[seq].response_mutex = response_mutex;    
+        seq_data_t seq_data;
+        seq_data.response_lambda = response_lambda;
+        seq_data.response_mutex = response_mutex;
+
+        responses[seq] = seq_data;  
         status = sequencer::SUCCESS;
+        LogToModuleFile("1", "Sequence not in order, stored in map seq {}", seq);
         num_of_out_of_sequence_functions++;
     }
     // stats max consecutive responses executed in sequence
