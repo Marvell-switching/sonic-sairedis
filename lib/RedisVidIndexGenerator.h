@@ -35,8 +35,6 @@ namespace sairedis
 
             std::string m_vidCounterName;
 
-            bool m_protected;
-
             std::shared_ptr<std::mutex> m_mutex;
     };
 }

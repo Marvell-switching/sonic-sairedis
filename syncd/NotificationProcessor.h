@@ -21,7 +21,8 @@ namespace syncd
             NotificationProcessor(
                     _In_ std::shared_ptr<NotificationProducerBase> producer,
                     _In_ std::shared_ptr<RedisClient> client,
-                    _In_ std::function<void(const swss::KeyOpFieldsValuesTuple&)> synchronizer);
+                    _In_ std::function<void(const swss::KeyOpFieldsValuesTuple&)> synchronizer,
+                    _In_ std::shared_ptr<std::mutex> mutex = nullptr);
 
             virtual ~NotificationProcessor();
 
@@ -176,5 +177,7 @@ namespace syncd
             std::shared_ptr<RedisClient> m_client;
 
             std::shared_ptr<NotificationProducerBase> m_notifications;
+
+            std::shared_ptr<std::mutex> m_mutex;
     };
 }

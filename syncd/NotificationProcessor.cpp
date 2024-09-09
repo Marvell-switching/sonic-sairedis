@@ -17,10 +17,12 @@ using namespace saimeta;
 NotificationProcessor::NotificationProcessor(
         _In_ std::shared_ptr<NotificationProducerBase> producer,
         _In_ std::shared_ptr<RedisClient> client,
-        _In_ std::function<void(const swss::KeyOpFieldsValuesTuple&)> synchronizer):
+        _In_ std::function<void(const swss::KeyOpFieldsValuesTuple&)> synchronizer,
+        _In_ std::shared_ptr<std::mutex> mutex):
     m_synchronizer(synchronizer),
     m_client(client),
-    m_notifications(producer)
+    m_notifications(producer),
+    m_mutex(mutex)
 {
     SWSS_LOG_ENTER();
 
@@ -45,7 +47,13 @@ void NotificationProcessor::sendNotification(
 
     SWSS_LOG_INFO("%s %s", op.c_str(), data.c_str());
 
+// multi thread syncd lock db connector
+    if(m_mutex != nullptr)
+        m_mutex->lock();
     m_notifications->send(op, data, entry);
+// multi thread syncd unlock db connector
+    if(m_mutex != nullptr)
+        m_mutex->unlock();
 
     SWSS_LOG_DEBUG("notification send successfully");
 }

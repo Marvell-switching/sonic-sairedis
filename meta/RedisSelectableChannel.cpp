@@ -6,19 +6,15 @@
 using namespace sairedis;
 
 #define MY_LOCK() \
-if(m_protected) \
+if(m_mutex) \
 { \
-    LogToModuleFile("1", "before MY_LOCK()"); \
     m_mutex->lock(); \
-    LogToModuleFile("1", "after MY_LOCK()"); \
 } 
 
 #define MY_UNLOCK() \
-if(m_protected) \
+if(m_mutex) \
 { \
-    LogToModuleFile("1", "before MY_UNLOCK()"); \
     m_mutex->unlock(); \
-    LogToModuleFile("1", "after MY_UNLOCK()"); \
 }
 
 RedisSelectableChannel::RedisSelectableChannel(
@@ -48,14 +44,7 @@ RedisSelectableChannel::RedisSelectableChannel(
     m_getResponse = std::make_shared<swss::ProducerTable>(m_dbAsic.get(), getResponseTable);
 
     SWSS_LOG_NOTICE("opened redis channel");
-    if(t_mutex != NULL)
-    {
-        m_protected = true;
-    }
-    else
-    {
-        m_protected = false;
-    }
+   
 }
 
 bool RedisSelectableChannel::empty()
