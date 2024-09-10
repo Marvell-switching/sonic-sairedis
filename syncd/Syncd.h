@@ -490,7 +490,7 @@ namespace syncd
 
 // multi thread syncd - start     
             void pushRingBuffer(SyncdRing* ringBuffer , AnyTask&& func);
-            void popRingBuffer(SyncdRing* ringBuffer);
+            void popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName);
             void enableRingBuffer();
 // multi thread syncd - start
 
@@ -705,6 +705,57 @@ namespace syncd
                         {SAI_OBJECT_TYPE_BRIDGE, "SAI_OBJECT_TYPE_BRIDGE"},
                         {SAI_OBJECT_TYPE_BRIDGE_PORT, "SAI_OBJECT_TYPE_BRIDGE_PORT"},
                         {SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY, "SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY"},
+                        {SAI_OBJECT_TYPE_TAM, "SAI_OBJECT_TYPE_TAM"},
+                        {SAI_OBJECT_TYPE_SRV6_SIDLIST, "SAI_OBJECT_TYPE_SRV6_SIDLIST"},
+                        {SAI_OBJECT_TYPE_PORT_POOL, "SAI_OBJECT_TYPE_PORT_POOL"},
+                        {SAI_OBJECT_TYPE_INSEG_ENTRY, "SAI_OBJECT_TYPE_INSEG_ENTRY"},
+                        {SAI_OBJECT_TYPE_DTEL, "SAI_OBJECT_TYPE_DTEL"},
+                        {SAI_OBJECT_TYPE_DTEL_QUEUE_REPORT, "SAI_OBJECT_TYPE_DTEL_QUEUE_REPORT"},
+                        {SAI_OBJECT_TYPE_DTEL_INT_SESSION, "SAI_OBJECT_TYPE_DTEL_INT_SESSION"},
+                        {SAI_OBJECT_TYPE_DTEL_REPORT_SESSION, "SAI_OBJECT_TYPE_DTEL_REPORT_SESSION"},
+                        {SAI_OBJECT_TYPE_DTEL_EVENT, "SAI_OBJECT_TYPE_DTEL_EVENT"},
+                        {SAI_OBJECT_TYPE_BFD_SESSION, "SAI_OBJECT_TYPE_BFD_SESSION"},
+                        {SAI_OBJECT_TYPE_ISOLATION_GROUP, "SAI_OBJECT_TYPE_ISOLATION_GROUP"},
+                        {SAI_OBJECT_TYPE_ISOLATION_GROUP_MEMBER, "SAI_OBJECT_TYPE_ISOLATION_GROUP_MEMBER"},
+                        {SAI_OBJECT_TYPE_TAM_MATH_FUNC, "SAI_OBJECT_TYPE_TAM_MATH_FUNC"},
+                        {SAI_OBJECT_TYPE_TAM_REPORT, "SAI_OBJECT_TYPE_TAM_REPORT"},
+                        {SAI_OBJECT_TYPE_TAM_EVENT_THRESHOLD, "SAI_OBJECT_TYPE_TAM_EVENT_THRESHOLD"},
+                        {SAI_OBJECT_TYPE_TAM_TEL_TYPE, "SAI_OBJECT_TYPE_TAM_TEL_TYPE"},
+                        {SAI_OBJECT_TYPE_TAM_TRANSPORT, "SAI_OBJECT_TYPE_TAM_TRANSPORT"},
+                        {SAI_OBJECT_TYPE_TAM_TELEMETRY, "SAI_OBJECT_TYPE_TAM_TELEMETRY"},
+                        {SAI_OBJECT_TYPE_TAM_COLLECTOR, "SAI_OBJECT_TYPE_TAM_COLLECTOR"},
+                        {SAI_OBJECT_TYPE_TAM_EVENT_ACTION, "SAI_OBJECT_TYPE_TAM_EVENT_ACTION"},
+                        {SAI_OBJECT_TYPE_TAM_EVENT, "SAI_OBJECT_TYPE_TAM_EVENT"},
+                        {SAI_OBJECT_TYPE_NAT_ZONE_COUNTER, "SAI_OBJECT_TYPE_NAT_ZONE_COUNTER"},
+                        {SAI_OBJECT_TYPE_NAT_ENTRY, "SAI_OBJECT_TYPE_NAT_ENTRY"},
+                        {SAI_OBJECT_TYPE_TAM_INT, "SAI_OBJECT_TYPE_TAM_INT"},
+                        {SAI_OBJECT_TYPE_COUNTER, "SAI_OBJECT_TYPE_COUNTER"},
+                        {SAI_OBJECT_TYPE_DEBUG_COUNTER, "SAI_OBJECT_TYPE_DEBUG_COUNTER"},
+                        {SAI_OBJECT_TYPE_PORT_CONNECTOR, "SAI_OBJECT_TYPE_PORT_CONNECTOR"},
+                        {SAI_OBJECT_TYPE_PORT_SERDES, "SAI_OBJECT_TYPE_PORT_SERDES"},
+                        {SAI_OBJECT_TYPE_MACSEC, "SAI_OBJECT_TYPE_MACSEC"},
+                        {SAI_OBJECT_TYPE_MACSEC_PORT, "SAI_OBJECT_TYPE_MACSEC_PORT"},
+                        {SAI_OBJECT_TYPE_MACSEC_FLOW, "SAI_OBJECT_TYPE_MACSEC_FLOW"},
+                        {SAI_OBJECT_TYPE_MACSEC_SC, "SAI_OBJECT_TYPE_MACSEC_SC"},
+                        {SAI_OBJECT_TYPE_MACSEC_SA, "SAI_OBJECT_TYPE_MACSEC_SA"},
+                        {SAI_OBJECT_TYPE_SYSTEM_PORT, "SAI_OBJECT_TYPE_SYSTEM_PORT"},
+                        {SAI_OBJECT_TYPE_FINE_GRAINED_HASH_FIELD, "SAI_OBJECT_TYPE_FINE_GRAINED_HASH_FIELD"},
+                        {SAI_OBJECT_TYPE_SWITCH_TUNNEL, "SAI_OBJECT_TYPE_SWITCH_TUNNEL"},
+                        {SAI_OBJECT_TYPE_MY_SID_ENTRY, "SAI_OBJECT_TYPE_MY_SID_ENTRY"},
+                        {SAI_OBJECT_TYPE_MY_MAC, "SAI_OBJECT_TYPE_MY_MAC"},
+                        {SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP, "SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP"},
+                        {SAI_OBJECT_TYPE_IPSEC, "SAI_OBJECT_TYPE_IPSEC"},
+                        {SAI_OBJECT_TYPE_IPSEC_PORT, "SAI_OBJECT_TYPE_IPSEC_PORT"},
+                        {SAI_OBJECT_TYPE_IPSEC_SA, "SAI_OBJECT_TYPE_IPSEC_SA"},
+                        {SAI_OBJECT_TYPE_GENERIC_PROGRAMMABLE, "SAI_OBJECT_TYPE_GENERIC_PROGRAMMABLE"},
+                        {SAI_OBJECT_TYPE_ARS_PROFILE, "SAI_OBJECT_TYPE_ARS_PROFILE"},
+                        {SAI_OBJECT_TYPE_ARS, "SAI_OBJECT_TYPE_ARS"},
+                        {SAI_OBJECT_TYPE_ACL_TABLE_CHAIN_GROUP, "SAI_OBJECT_TYPE_ACL_TABLE_CHAIN_GROUP"},
+                        {SAI_OBJECT_TYPE_TWAMP_SESSION, "SAI_OBJECT_TYPE_TWAMP_SESSION"},
+                        {SAI_OBJECT_TYPE_TAM_COUNTER_SUBSCRIPTION, "SAI_OBJECT_TYPE_TAM_COUNTER_SUBSCRIPTION"},
+                        {SAI_OBJECT_TYPE_POE_DEVICE, "SAI_OBJECT_TYPE_POE_DEVICE"},
+                        {SAI_OBJECT_TYPE_POE_PSE, "SAI_OBJECT_TYPE_POE_PSE"},
+                        {SAI_OBJECT_TYPE_POE_PORT, "SAI_OBJECT_TYPE_POE_PORT"},
                         {SAI_OBJECT_TYPE_MAX, "SAI_OBJECT_TYPE_MAX"}
                 };
 
@@ -729,7 +780,7 @@ namespace syncd
                 };                 
 
 
-                std::array<int, 43> crudOperations1Enums = {
+                std::array<int, 93> crudOperations1Enums = {
                         SAI_OBJECT_TYPE_NULL,
                         SAI_OBJECT_TYPE_PORT,
                         SAI_OBJECT_TYPE_LAG,                        
@@ -773,10 +824,60 @@ namespace syncd
                         SAI_OBJECT_TYPE_MCAST_FDB_ENTRY,
                         SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
                         SAI_OBJECT_TYPE_BRIDGE,
-                        SAI_OBJECT_TYPE_BRIDGE_PORT
+                        SAI_OBJECT_TYPE_BRIDGE_PORT,
+                        SAI_OBJECT_TYPE_TAM,
+                        SAI_OBJECT_TYPE_SRV6_SIDLIST,
+                        SAI_OBJECT_TYPE_PORT_POOL,
+                        SAI_OBJECT_TYPE_INSEG_ENTRY,
+                        SAI_OBJECT_TYPE_DTEL, 
+                        SAI_OBJECT_TYPE_DTEL_QUEUE_REPORT, 
+                        SAI_OBJECT_TYPE_DTEL_INT_SESSION, 
+                        SAI_OBJECT_TYPE_DTEL_REPORT_SESSION, 
+                        SAI_OBJECT_TYPE_DTEL_EVENT, 
+                        SAI_OBJECT_TYPE_BFD_SESSION,
+                        SAI_OBJECT_TYPE_ISOLATION_GROUP,
+                        SAI_OBJECT_TYPE_ISOLATION_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_TAM_MATH_FUNC,
+                        SAI_OBJECT_TYPE_TAM_REPORT,
+                        SAI_OBJECT_TYPE_TAM_EVENT_THRESHOLD,
+                        SAI_OBJECT_TYPE_TAM_TEL_TYPE,
+                        SAI_OBJECT_TYPE_TAM_TRANSPORT,
+                        SAI_OBJECT_TYPE_TAM_TELEMETRY,
+                        SAI_OBJECT_TYPE_TAM_COLLECTOR,
+                        SAI_OBJECT_TYPE_TAM_EVENT_ACTION,
+                        SAI_OBJECT_TYPE_TAM_EVENT,
+                        SAI_OBJECT_TYPE_NAT_ZONE_COUNTER,
+                        SAI_OBJECT_TYPE_NAT_ENTRY,
+                        SAI_OBJECT_TYPE_TAM_INT,
+                        SAI_OBJECT_TYPE_COUNTER,
+                        SAI_OBJECT_TYPE_DEBUG_COUNTER,
+                        SAI_OBJECT_TYPE_PORT_CONNECTOR,
+                        SAI_OBJECT_TYPE_PORT_SERDES,
+                        SAI_OBJECT_TYPE_MACSEC,
+                        SAI_OBJECT_TYPE_MACSEC_PORT,
+                        SAI_OBJECT_TYPE_MACSEC_FLOW,
+                        SAI_OBJECT_TYPE_MACSEC_SC,
+                        SAI_OBJECT_TYPE_MACSEC_SA,
+                        SAI_OBJECT_TYPE_SYSTEM_PORT,
+                        SAI_OBJECT_TYPE_FINE_GRAINED_HASH_FIELD,
+                        SAI_OBJECT_TYPE_SWITCH_TUNNEL,
+                        SAI_OBJECT_TYPE_MY_SID_ENTRY,
+                        SAI_OBJECT_TYPE_MY_MAC,
+                        SAI_OBJECT_TYPE_IPSEC,
+                        SAI_OBJECT_TYPE_IPSEC_PORT,
+                        SAI_OBJECT_TYPE_IPSEC_SA,
+                        SAI_OBJECT_TYPE_GENERIC_PROGRAMMABLE,
+                        SAI_OBJECT_TYPE_ARS_PROFILE,
+                        SAI_OBJECT_TYPE_ARS,
+                        SAI_OBJECT_TYPE_ACL_TABLE_CHAIN_GROUP,
+                        SAI_OBJECT_TYPE_TWAMP_SESSION,
+                        SAI_OBJECT_TYPE_TAM_COUNTER_SUBSCRIPTION,
+                        SAI_OBJECT_TYPE_POE_DEVICE,
+                        SAI_OBJECT_TYPE_POE_PSE,
+                        SAI_OBJECT_TYPE_POE_PORT
                 };
 
-                std::array<int, 16> crudOperations2Enums = {
+                std::array<int, 17> crudOperations2Enums = {
                         SAI_OBJECT_TYPE_VIRTUAL_ROUTER,
                         SAI_OBJECT_TYPE_NEXT_HOP,
                         SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
@@ -792,7 +893,8 @@ namespace syncd
                         SAI_OBJECT_TYPE_TUNNEL_MAP,
                         SAI_OBJECT_TYPE_TUNNEL,
                         SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
-                        SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY
+                        SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY,
+                        SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP
                 };
 
                 // Populate crudOperations1 using the enums array

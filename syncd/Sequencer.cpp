@@ -42,9 +42,11 @@ bool Sequencer::isExit()
 // Get sequence number
 // if sequencer is full, wait
 sequencer::SequenceStatus Sequencer::allocateSequenceNumber(int *seq_num) {
+    LogToModuleFile("1", "allocateSequenceNumber");
     std::unique_lock<std::mutex> lock(mtx);
     // if queue is full wait on condition variable
     cv.wait(lock, [this] { return ( isExit() || isFull()==false) ; });
+    LogToModuleFile("1", "allocateSequenceNumber - after wait");
     // exit sequencer_exited
     if (sequencer_exited) {
         *seq_num = INVALID_SEQUENCE_NUMBER;
@@ -53,7 +55,9 @@ sequencer::SequenceStatus Sequencer::allocateSequenceNumber(int *seq_num) {
     // update receive param
     *seq_num = current_seq;
     // increment the sequence number
+    LogToModuleFile("1", "allocateSequenceNumber - seq {}", current_seq);
     current_seq = seqGetNext(current_seq);
+    LogToModuleFile("1", "allocateSequenceNumber - next seq {}", current_seq);
     // return success  
     return sequencer::SUCCESS;
 }
@@ -80,15 +84,18 @@ void Sequencer::callSeq(std::function<void()> response_lambda, std::shared_ptr<s
         if ( unlock )
             mtx.lock();
     }
-    else
+    else{
         // update stats
         num_of_null_functions++;
+        LogToModuleFile("1", "Null function num_of_null_functions {}", num_of_null_functions);
+    }
         
 }
 
 // Add/Execute sequence function
 sequencer::SequenceStatus Sequencer::executeFuncInSequence(seq_t seq, std::function<void()> response_lambda, std::shared_ptr<std::mutex> response_mutex) {
     // invalid seq so execute immediately
+    LogToModuleFile("1", "executeFuncInSequence seq {}", seq);
     if ( seq == INVALID_SEQUENCE_NUMBER) {
         callSeq(response_lambda, response_mutex, false);
         return sequencer::SUCCESS;

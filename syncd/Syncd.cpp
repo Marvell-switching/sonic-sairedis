@@ -308,7 +308,7 @@ Syncd::Syncd(
         if (group.ringBuffer) {
 		    
             // Create a thread for each operation group to pop from the ring buffer
-            ringBufferThreads[groupName] = std::thread(&Syncd::popRingBuffer, this, group.ringBuffer);
+            ringBufferThreads[groupName] = std::thread(&Syncd::popRingBuffer, this, group.ringBuffer, groupName);
 			LogToModuleFile("1","start ring buff {}",getNameByRingBuffer(group.ringBuffer));
         }
     }
@@ -318,8 +318,9 @@ Syncd::Syncd(
 }
 
 // multi thread syncd -> start
-void Syncd::popRingBuffer(SyncdRing* ringBuffer)
+void Syncd::popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName) 
 {
+    pthread_setname_np(pthread_self(), threadName.c_str());
     if (!ringBuffer || ringBuffer->Started)
 	{
 		LogToModuleFile(getNameByRingBuffer(ringBuffer), "popRingBuffer return");
@@ -5381,6 +5382,14 @@ void Syncd::getObjectTypeByOperation(
         sai_deserialize_object_meta_key(key, metaKey);
         objectType = metaKey.objecttype;
         LogToModuleFile("1", "op {} has object id ", op.c_str(), sai_serialize_object_type(objectType).c_str());
+    }
+    else if (   op == REDIS_ASIC_STATE_COMMAND_BULK_SET ||
+                op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE ||
+                op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE)  
+    {
+        LogToModuleFile("1", "bulk op {}", op.c_str());
+        std::string strObjectType = key.substr(0, key.find(":"));
+        sai_deserialize_object_type(strObjectType, objectType);
     }
     else if (op == REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_QUERY ||
              op == REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_QUERY)
