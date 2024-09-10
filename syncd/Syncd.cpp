@@ -125,13 +125,6 @@ using namespace std::placeholders;
     SEQ_EXEC_PUSH(_seq, _func_call) \
 }
 
-// #define REDIS_PROTECT(_func_call)\
-//     m_redis_mutex.lock();\
-//     _func_call; \
-//     m_redis_mutex.unlock();
-
-// multi thread syncd -> end 
-
 
  
 Syncd::Syncd(
@@ -5475,8 +5468,9 @@ bool Syncd::getApiRingBuffer(
     }
 
     if (!found) {
-        LogToModuleFile("1", "didn't match ring buffer to api");
+        LogToModuleFile("1", "didn't match ring buffer to api operation: {} key {}", valueStr, key.c_str());
     }
+    return true;
 }
 
 void Syncd::run()
