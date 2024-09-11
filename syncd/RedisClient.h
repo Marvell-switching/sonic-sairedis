@@ -20,7 +20,7 @@ namespace syncd
         public:
 
             RedisClient(
-                    _In_ std::shared_ptr<swss::DBConnector> dbAsic, _In_ std::shared_ptr<std::mutex> t_mutex = nullptr);
+                    _In_ std::shared_ptr<swss::DBConnector> dbAsic, _In_ std::shared_ptr<std::timed_mutex> t_mutex = nullptr);
 
             virtual ~RedisClient();
 
@@ -184,9 +184,10 @@ namespace syncd
 
             std::string m_fdbFlushSha;
 
-            bool m_protected;
+            bool m_protected;   
 
-            std::shared_ptr<std::mutex> m_mutex;
+            //std::shared_ptr<std::mutex> m_mutex;
+            std::shared_ptr<std::timed_mutex> m_mutex;
 
     };
 }

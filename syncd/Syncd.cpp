@@ -45,6 +45,18 @@ using namespace saimeta;
 using namespace sairediscommon;
 using namespace std::placeholders;
 
+std::shared_ptr<sai_status_t[]> status_list_safe(
+    uint32_t status_count,
+    const sai_status_t *status_list
+ )
+ {
+    std::shared_ptr<sai_status_t[]> n_status_list(new sai_status_t[status_count]); \
+    std::memcpy(n_status_list.get(), status_list, status_count * sizeof(sai_status_t)); 
+    return n_status_list;
+ }
+
+#define SEQ_STATUS(_status_count, _status_list) \
+    (uint32_t)_status_count , std::move(status_list_safe((uint32_t)(_status_count), (_status_list)))
 
 #ifdef ASAN_ENABLED
 #define WD_DELAY_FACTOR 2
@@ -67,7 +79,7 @@ Syncd::Syncd(
 {
     SWSS_LOG_ENTER();
 
-    pthread_setname_np(pthread_self(), "main");
+    pthread_setname_np(pthread_self(), "syncmain");
 
     SWSS_LOG_NOTICE("sairedis git revision %s, SAI git revision: %s", SAIREDIS_GIT_REVISION, SAI_GIT_REVISION);
 
@@ -142,7 +154,7 @@ Syncd::Syncd(
 
         bool modifyRedis = m_enableSyncMode ? false : true;
 
-        m_redis_mutex = std::make_shared<std::mutex>();
+        m_redis_mutex = std::make_shared<std::timed_mutex>();
 
         m_selectableChannel = std::make_shared<sairedis::RedisSelectableChannel>(
                 m_dbAsic,
@@ -441,7 +453,7 @@ sai_status_t Syncd::processSingleEvent(
     auto& op = kfvOp(kco);
 
     LogToModuleFile("1","key: {} op: {} {}", key, op, std::to_string(sequenceNumber));
-
+    //SWSS_LOG_INFO("get API for key: %s op: %s", key.c_str(), op.c_str()  );
     if (key.length() == 0)
     {
         SWSS_LOG_DEBUG("no elements in m_buffer");
@@ -1025,13 +1037,12 @@ sai_status_t Syncd::processBulkQuadEvent(
     }
 }
 
+
+
 void Syncd::sendApiResponseUpdateRedisQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ sai_status_t status,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ int sequenceNumber)
-{
-    syncUpdateRedisQuadEvent(status, api, kco);
+        _In_ sai_status_t status)
+{    
     sendApiResponse(api, status);
 
 }
@@ -1043,11 +1054,8 @@ void Syncd::sendGetResponseUpdateRedisQuadEvent(
         _In_ sai_status_t status,
         _In_ uint32_t attr_count,
         //_In_ sai_attribute_t *attr_list,
-        _In_ std::shared_ptr<sai_attribute_t[]> attr_list,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco,
-        _In_ sai_common_api_t api)
-{
-    syncUpdateRedisQuadEvent(status, api, kco);
+        _In_ std::shared_ptr<sai_attribute_t[]> attr_list)
+{    
     sendGetResponse(objectType, strObjectId, switchVid, status, attr_count, std::move(attr_list));
 }
 
@@ -1055,42 +1063,23 @@ void Syncd::sendApiResponseUpdateRedisBulkQuadEvent(
     _In_ sai_common_api_t api,
     _In_ sai_status_t status,
 	_In_ uint32_t object_count,
-    _In_ sai_object_type_t objectType,
-    _In_ std::vector<sai_status_t> statuses,
-    _In_ const std::vector<std::string>& objectIds,
-    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+    _In_ std::shared_ptr<sai_status_t[]> object_statuses)
+
 {
-    SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();    
 
-    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
-
-    sendApiResponse(api, status, object_count, statuses.data());
+    sendApiResponse(api, status, object_count, object_statuses, true);
 }
 
 void Syncd::sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(
     _In_ sai_common_api_t api,
     _In_ sai_status_t status,
     _In_ uint32_t object_count,
-    _In_ sai_object_type_t objectType,
-    _In_ std::vector<sai_status_t> statuses,
-    _In_ const std::vector<std::string>& objectIds,
-    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+    _In_ std::shared_ptr<sai_status_t[]> object_statuses)
 {
     SWSS_LOG_ENTER();
 
-    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
-
-    for (auto& str: objectIds)
-    {
-        sai_object_id_t objectVid;
-        sai_deserialize_object_id(str, objectVid);
-
-        // in init view mode insert every created object except switch
-
-        m_createdInInitView.insert(objectVid);
-    }
-
-    sendApiResponse(api, status, object_count, statuses.data());
+    sendApiResponse(api, status, object_count, object_statuses, true);
 }
 
 sai_status_t Syncd::processBulkQuadEventInInitViewMode(
@@ -1120,9 +1109,10 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
 
             if (info->isnonobjectid)
             {
+                syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
                 LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
                 auto lambda = [=]() {
-                    sendApiResponseUpdateRedisBulkQuadEvent(api, SAI_STATUS_SUCCESS,(uint32_t)statuses.size(), objectType, statuses, objectIds, strAttributes);
+                    sendApiResponseUpdateRedisBulkQuadEvent(api, SAI_STATUS_SUCCESS, SEQ_STATUS( statuses.size(), statuses.data()));
                 };
                 sendStausAdvancedResponseSequence(sequenceNumber,lambda);
                 
@@ -1140,9 +1130,19 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
                             sai_serialize_object_type(objectType).c_str());
 
                 default:
+                    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
+
+                    for (auto& str: objectIds)
+                    {
+                        sai_object_id_t objectVid;
+                        sai_deserialize_object_id(str, objectVid);
+                    
+					    // in init view mode insert every created object except switch
+                        m_createdInInitView.insert(objectVid);
+                    }
                     LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion to Lambda {}", sequenceNumber);
                     auto lambda = [=]() {
-                        sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(api, SAI_STATUS_SUCCESS, (uint32_t)statuses.size(), objectType, statuses, objectIds, strAttributes);
+                        sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(api, SAI_STATUS_SUCCESS, SEQ_STATUS( statuses.size(), statuses.data()));
                     };
                     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
                    
@@ -1250,6 +1250,10 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].bv_id = m_translator->translateVidToRid(entries[it].bv_id);
             }
 
+            static PerformanceIntervalTimer timer("Syncd::processBulkCreateEntry(fdb_entry) CREATE");
+
+            timer.start();
+
             status = m_vendorSai->bulkCreate(
                     object_count,
                     entries.data(),
@@ -1257,6 +1261,10 @@ sai_status_t Syncd::processBulkCreateEntry(
                     attr_lists.data(),
                     mode,
                     statuses.data());
+
+            timer.stop();
+
+            timer.inc(object_count);
 
         }
         break;
@@ -1972,8 +1980,9 @@ sai_status_t Syncd::processBulkEntry(
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
             LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+            syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
             auto lambda = [=]() {
-                sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+                sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
             };
             sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2099,8 +2108,9 @@ sai_status_t Syncd::processBulkEntry(
         statuses[idx] = status;
     }
     LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+        sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
   
@@ -2333,8 +2343,9 @@ sai_status_t Syncd::processBulkOid(
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
             LogToModuleFile("1", "1.add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+            syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
             auto lambda = [=]() {
-                sendApiResponseUpdateRedisBulkQuadEvent(api, all, (uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+                sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
             };
             sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2388,8 +2399,9 @@ sai_status_t Syncd::processBulkOid(
         statuses[idx] = status;
     }
     LogToModuleFile("1", "2. add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+    syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisBulkQuadEvent(api, all,(uint32_t)objectIds.size(), objectType, statuses, objectIds, strAttributes);
+        sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2487,8 +2499,9 @@ sai_status_t Syncd::processQuadInInitViewModeCreate(
         }
     }
     LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    syncUpdateRedisQuadEvent(SAI_STATUS_SUCCESS, api, kco);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
+        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2555,8 +2568,9 @@ sai_status_t Syncd::processQuadInInitViewModeRemove(
         m_initViewRemovedVidSet.insert(objectVid);
     }
     LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    syncUpdateRedisQuadEvent(SAI_STATUS_SUCCESS, api, kco);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
+        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2575,8 +2589,9 @@ sai_status_t Syncd::processQuadInInitViewModeSet(
 
     // we support SET api on all objects in init view mode
     LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    syncUpdateRedisQuadEvent(SAI_STATUS_SUCCESS, api, kco);
     auto lambda = [=]() {
-        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS, kco, sequenceNumber);
+        sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS);
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2630,9 +2645,10 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
                     sai_serialize_object_type(objectType).c_str());
 
             status = SAI_STATUS_INVALID_OBJECT_ID;
+            syncUpdateRedisQuadEvent(status, api, kco);
             LogToModuleFile("1", "1. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
             auto lambda = [=]() {
-                sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
+                sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr));
             };
             sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -2679,12 +2695,24 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
      * key.
      */
     LogToModuleFile("1", "2. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    syncUpdateRedisQuadEvent(status, api, kco);
     auto lambda = [=]() {
-        sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
+        sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr));
     };
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
     return status;
+}
+
+// multi thread syncd -> overloading In_ std::shared_ptr<sai_attribute_t[]> object_statuses
+void Syncd::sendApiResponse(
+        _In_ sai_common_api_t api,
+        _In_ sai_status_t status,
+        _In_ uint32_t object_count,
+        _In_ std::shared_ptr<sai_status_t[]> object_statuses,
+        _In_ bool isProtected)
+{
+    sendApiResponse(api, status, object_count, object_statuses.get());
 }
 
 void Syncd::sendApiResponse(
@@ -2694,7 +2722,7 @@ void Syncd::sendApiResponse(
         _In_ sai_status_t* object_statuses)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("sendApiResponse");
+    //SWSS_LOG_NOTICE("sendApiResponse");
 
     /*
      * By default synchronous mode is disabled and can be enabled by command
@@ -2705,7 +2733,7 @@ void Syncd::sendApiResponse(
 
     if (!m_enableSyncMode)
     {
-        SWSS_LOG_NOTICE("sendApiResponse !m_enableSyncMode");
+        //SWSS_LOG_NOTICE("sendApiResponse !m_enableSyncMode");
         return;
     }
 
@@ -3126,6 +3154,7 @@ void Syncd::pushRingBuffer(SyncdRing* ringBuffer, AnyTask&& func)
     } else {
         while (!ringBuffer->push(func)) {
             SWSS_LOG_WARN("fail to push..ring is full...");
+            //busy wait
         }
         LogToModuleFile("1", "pushRingBuffer: notify_one");
         ringBuffer->cv.notify_one();
@@ -3255,9 +3284,84 @@ sai_status_t Syncd::processQuadEvent(
         std::memcpy(newPtr.get(), attr_list, attr_count * sizeof(sai_attribute_t));
 
         sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
+        syncUpdateRedisQuadEvent(status, api, kco);
+
+
         LogToModuleFile("1", "add sendGetResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        
+#if 0
+
+        SWSS_LOG_INFO("attr_count '=' %d", attr_count);
+        SWSS_LOG_INFO("attr_list ptr '=' %p", newPtr.get());
+        for (uint32_t i = 0; i < attr_count; i++)
+        {
+            sai_attribute_t &attr = newPtr[i];
+
+            SWSS_LOG_INFO("attr.id %d = %d", i, attr.id);
+
+            auto meta = sai_metadata_get_attr_metadata(metaKey.objecttype, attr.id);
+
+            if (meta == NULL)
+            {
+                SWSS_LOG_THROW("1. unable to get metadata for object type %x, attribute %d", metaKey.objecttype, attr.id);
+            }
+
+            /*
+            * TODO: Many times we do switch for list of attributes to perform some
+            * operation on each oid from that attribute, we should provide clever
+            * way via sai metadata utils to get that.
+            */
+
+            switch (meta->attrvaluetype)
+            {
+                case SAI_ATTR_VALUE_TYPE_OBJECT_ID:
+                    SWSS_LOG_INFO("attr.value.oid = %d", attr.value.oid);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_OBJECT_LIST:
+                    SWSS_LOG_INFO("attr.value.objlist = %d", attr.value.objlist);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_FIELD_DATA_OBJECT_ID:
+                    if (attr.value.aclfield.enable)
+                        SWSS_LOG_INFO("attr.value.aclfield.data.oid = %d", attr.value.aclfield.data.oid);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_FIELD_DATA_OBJECT_LIST:
+                    if (attr.value.aclfield.enable)
+                        SWSS_LOG_INFO("attr.value.aclfield.data.objlist = %d", attr.value.aclfield.data.objlist);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_ACTION_DATA_OBJECT_ID:
+                    if (attr.value.aclaction.enable)
+                        SWSS_LOG_INFO("attr.value.aclaction.parameter.oid = %d", attr.value.aclaction.parameter.oid);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_ACTION_DATA_OBJECT_LIST:
+                    if (attr.value.aclaction.enable)
+                        SWSS_LOG_INFO("attr.value.aclaction.parameter.objlist = %d", attr.value.aclaction.parameter.objlist);
+                    break;
+
+                default:
+
+                    /*
+                    * If in future new attribute with object id will be added this
+                    * will make sure that we will need to add handler here.
+                    */
+
+                    if (meta->isoidattribute)
+                    {
+                        SWSS_LOG_ERROR("attribute %s is object id, but not processed, FIXME", meta->attridname);
+                    }
+
+                    break;
+            }
+        }
+#endif
+
+
         auto lambda = [=]() {
-            sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, attr_count, std::move(newPtr), kco, api);
+            sendGetResponseUpdateRedisQuadEvent(metaKey.objecttype, strObjectId, switchVid, status, attr_count, std::move(newPtr));
         };
         sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
@@ -3267,8 +3371,9 @@ sai_status_t Syncd::processQuadEvent(
     else if (status != SAI_STATUS_SUCCESS)
     {
         LogToModuleFile("1", "1. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        syncUpdateRedisQuadEvent(status, api, kco);
 	    auto lambda = [=]() {
-	         sendApiResponseUpdateRedisQuadEvent(api, status, kco, sequenceNumber);
+	         sendApiResponseUpdateRedisQuadEvent(api, status);
 	    };
 	    sendStausAdvancedResponseSequence(sequenceNumber,lambda); 
 
@@ -3300,8 +3405,9 @@ sai_status_t Syncd::processQuadEvent(
     else // non GET api, status is SUCCESS
     {
         LogToModuleFile("1", "2. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        syncUpdateRedisQuadEvent(status, api, kco);
         auto lambda = [=]() {
-            sendApiResponseUpdateRedisQuadEvent(api, status, kco, sequenceNumber);
+            sendApiResponseUpdateRedisQuadEvent(api, status);
     	};
     	sendStausAdvancedResponseSequence(sequenceNumber,lambda); 
     }
@@ -3700,6 +3806,74 @@ void Syncd::sendGetResponse(
 
     if (status == SAI_STATUS_SUCCESS)
     {
+#if 0	
+        SWSS_LOG_INFO("attr_count '=' %d", attr_count);
+        SWSS_LOG_INFO("attr_list ptr '=' %p", attr_list);
+        for (uint32_t i = 0; i < attr_count; i++)
+        {
+            sai_attribute_t &attr = attr_list.get()[i];
+
+            SWSS_LOG_INFO("attr.id %d = %d", i, attr.id);
+
+            auto meta = sai_metadata_get_attr_metadata(objectType, attr.id);
+
+            if (meta == NULL)
+            {
+                SWSS_LOG_THROW("1. unable to get metadata for object type %x, attribute %d", objectType, attr.id);
+            }
+
+            /*
+            * TODO: Many times we do switch for list of attributes to perform some
+            * operation on each oid from that attribute, we should provide clever
+            * way via sai metadata utils to get that.
+            */
+
+            switch (meta->attrvaluetype)
+            {
+                case SAI_ATTR_VALUE_TYPE_OBJECT_ID:
+                    SWSS_LOG_INFO("attr.value.oid = %d", attr.value.oid);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_OBJECT_LIST:
+                    SWSS_LOG_INFO("attr.value.objlist = %d", attr.value.objlist);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_FIELD_DATA_OBJECT_ID:
+                    if (attr.value.aclfield.enable)
+                        SWSS_LOG_INFO("attr.value.aclfield.data.oid = %d", attr.value.aclfield.data.oid);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_FIELD_DATA_OBJECT_LIST:
+                    if (attr.value.aclfield.enable)
+                        SWSS_LOG_INFO("attr.value.aclfield.data.objlist = %d", attr.value.aclfield.data.objlist);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_ACTION_DATA_OBJECT_ID:
+                    if (attr.value.aclaction.enable)
+                        SWSS_LOG_INFO("attr.value.aclaction.parameter.oid = %d", attr.value.aclaction.parameter.oid);
+                    break;
+
+                case SAI_ATTR_VALUE_TYPE_ACL_ACTION_DATA_OBJECT_LIST:
+                    if (attr.value.aclaction.enable)
+                        SWSS_LOG_INFO("attr.value.aclaction.parameter.objlist = %d", attr.value.aclaction.parameter.objlist);
+                    break;
+
+                default:
+
+                    /*
+                    * If in future new attribute with object id will be added this
+                    * will make sure that we will need to add handler here.
+                    */
+
+                    if (meta->isoidattribute)
+                    {
+                        SWSS_LOG_ERROR("attribute %s is object id, but not processed, FIXME", meta->attridname);
+                    }
+
+                    break;
+            }
+        }
+#endif
         m_translator->translateRidToVid(objectType, switchVid, attr_count, attr_list.get());
 
         /*

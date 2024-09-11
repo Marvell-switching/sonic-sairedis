@@ -7,6 +7,7 @@
 #include <functional>
 #include <chrono>
 #include <limits>
+//#include "swss/logger.h"
 
 
 #include <string>
@@ -17,7 +18,7 @@
 
 namespace sequencer {
 
-    #define MAX_SEQUENCE_NUMBER 1024
+    #define MAX_SEQUENCE_NUMBER 1000
     #define INVALID_SEQUENCE_NUMBER std::numeric_limits<int>::min() // allow user to choose
     using AnyTask = std::function<void()>;
 

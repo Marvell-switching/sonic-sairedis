@@ -8,24 +8,25 @@
 #define MY_LOCK() \
 if(m_protected) \
 { \
-    LogToModuleFile("1", "before MY_LOCK()"); \
-    m_mutex->lock(); \
-    LogToModuleFile("1", "after MY_LOCK()"); \
-} 
+    if (!m_mutex->try_lock_for(std::chrono::minutes(2))) {\
+            SWSS_LOG_ERROR("FATAL: Failed to lock the mutex within 2 minutes");\
+        m_mutex->lock(); \
+        SWSS_LOG_ERROR("Moraml Mutex continue after 2 minutes");\
+    }\
+}
+
 
 #define MY_UNLOCK() \
 if(m_protected) \
 { \
-    LogToModuleFile("1", "before MY_UNLOCK()"); \
     m_mutex->unlock(); \
-    LogToModuleFile("1", "after MY_UNLOCK()"); \
 }
 
 using namespace syncd;
 
 RedisNotificationProducer::RedisNotificationProducer(
         _In_ const std::string& dbName,
-        _In_ std::shared_ptr<std::mutex> t_mutex) : m_mutex(t_mutex)
+        _In_ std::shared_ptr<std::timed_mutex> t_mutex) : m_mutex(t_mutex)
 {
     SWSS_LOG_ENTER();
 

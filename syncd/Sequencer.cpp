@@ -24,7 +24,8 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
         auto func = seq_data->second;
         if(func) {
             LogToModuleFile("1", "before execute lambda with sequenceNumber: {}", next_seq_to_send);
-            func();
+            //SWSS_LOG_INFO("Before execute lambda with sequenceNumber: %d", next_seq_to_send);
+            func();            
             LogToModuleFile("1", "after execute lambda with sequenceNumber: {}", next_seq_to_send);
             status = SUCCESS;
         }
@@ -62,6 +63,7 @@ bool Sequencer::allocateSequenceNumber(int *seq_num) {
    
     while(isFull()) {
         LogToModuleFile("1", "Sequencer is full, cannot allocate sequence number {}", current_seq);
+        //SWSS_LOG_INFO("Sequencer is full, cannot allocate sequence number %d", current_seq);
         //TODO: add sleep, and timeout error after X seconds
     }
 
@@ -128,6 +130,7 @@ bool Sequencer::executeFuncInSequence(int seq, std::function<void()> response_la
         // If the sequence is not the next to send, store it in the map
         responses[seq] = response_lambda;       
         LogToModuleFile("1", "storing lambda with seq: {} next to send: {}", seq, next_seq_to_send);
+        //SWSS_LOG_INFO("storing lambda with seq: %d next to send: %d", seq, next_seq_to_send);
         status = SUCCESS;
         num_of_out_of_sequence_functions++;
     }

@@ -364,25 +364,17 @@ namespace syncd
                     _In_ sai_common_api_t api,
                     _In_ sai_status_t status,
                     _In_ uint32_t object_count,
-                    _In_ sai_object_type_t objectType,
-                    _In_ std::vector<sai_status_t> statuses,
-                    _In_ const std::vector<std::string>& objectIds,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+                    _In_ std::shared_ptr<sai_status_t[]> object_statuses);
 
              void sendApiResponseUpdateRedisBulkQuadEvent(
                     _In_ sai_common_api_t api,
                     _In_ sai_status_t status,
                     _In_ uint32_t object_count,
-                    _In_ sai_object_type_t objectType,
-                    _In_ std::vector<sai_status_t> statuses,
-                    _In_ const std::vector<std::string>& objectIds,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)  ;
+                    _In_ std::shared_ptr<sai_status_t[]> object_statuses)  ;
                     
              void sendApiResponseUpdateRedisQuadEvent(
                     _In_ sai_common_api_t api,
-                    _In_ sai_status_t status,
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int sequenceNumber);
+                    _In_ sai_status_t status);
 
 
              void sendGetResponseUpdateRedisQuadEvent(
@@ -392,9 +384,7 @@ namespace syncd
                     _In_ sai_status_t status,
                     _In_ uint32_t attr_count,
                     //_In_ sai_attribute_t *attr_list,
-                    _In_ std::shared_ptr<sai_attribute_t[]> attr_list,
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ sai_common_api_t api);
+                    _In_ std::shared_ptr<sai_attribute_t[]> attr_list);
 
              void sendStatusAndEntryResponse(
                     _In_ sai_status_t status,
@@ -466,10 +456,17 @@ namespace syncd
              * Should not be used on GET api.
              */
             void sendApiResponse(
+                _In_ sai_common_api_t api,
+                _In_ sai_status_t status,
+                _In_ uint32_t object_count,
+                _In_ std::shared_ptr<sai_status_t[]> object_statuses,
+                _In_ bool isProtected);
+
+            void sendApiResponse(
                     _In_ sai_common_api_t api,
                     _In_ sai_status_t status,
                     _In_ uint32_t object_count = 0,
-                    _In_ sai_status_t * object_statuses = NULL);
+                    _In_ sai_status_t* object_statuses = NULL);
 
             void sendGetResponse(
                     _In_ sai_object_type_t objectType,
@@ -617,7 +614,7 @@ namespace syncd
              * * getting flex counter - here we skip using mutex
              */
             std::mutex m_mutex;
-            std::shared_ptr<std::mutex> m_redis_mutex;
+            std::shared_ptr<std::timed_mutex> m_redis_mutex;
 
             std::shared_ptr<swss::DBConnector> m_dbAsic;
 
@@ -796,6 +793,10 @@ namespace syncd
                 //if(saiObjectTypes.size() != (SAI_OBJECT_TYPE_MAX+1))
                 //        return SAI_STATUS_FAILURE;
 #if 1 
+              
+
+#if 0
+
                 std::set<std::string> miscOperations = {
                         //REDIS_ASIC_STATE_COMMAND_NOTIFY,  // Not included in the list (flow without ringbuff)
                         REDIS_ASIC_STATE_COMMAND_GET_STATS,
@@ -808,10 +809,9 @@ namespace syncd
                         REDIS_FLEX_COUNTER_COMMAND_STOP_POLL,
                         REDIS_FLEX_COUNTER_COMMAND_SET_GROUP,
                         REDIS_FLEX_COUNTER_COMMAND_DEL_GROUP
-                };                 
+                };   
 
-
-                std::array<int, 93> crudOperations1Enums = {
+                std::array<int, 94> crudOperations1Enums = {
                         SAI_OBJECT_TYPE_NULL,
                         SAI_OBJECT_TYPE_PORT,
                         SAI_OBJECT_TYPE_LAG,                        
@@ -955,7 +955,44 @@ namespace syncd
                         {"crud2", {crudOperations2, crudRingBuffer2}},
                         {"misc", {miscOperations, miscRingBuffer}},
                 };
- #endif
+#endif
+#if 1
+                std::array<int, 1> crudOperations1Enums = {
+                        SAI_OBJECT_TYPE_FDB_ENTRY                      
+                };
+
+                std::array<int, 1> crudOperations2Enums = {
+                        SAI_OBJECT_TYPE_ROUTE_ENTRY
+                };
+
+
+
+                // Populate crudOperations1 using the enums array
+                std::set<std::string> crudOperations1;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations1Enums.begin(), crudOperations1Enums.end(), item.enumValue) != crudOperations1Enums.end()) {
+                                crudOperations1.insert(item.enumString);
+                        }
+                }
+
+                // Populate crudOperations2 using the enums array
+                std::set<std::string> crudOperations2;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations2Enums.begin(), crudOperations2Enums.end(), item.enumValue) != crudOperations2Enums.end()) {
+                                crudOperations2.insert(item.enumString);
+                        }
+                }
+ 
+                // Allocate new SyncdRing instances for each operation group
+                auto crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
+                auto crudRingBuffer2 = new SyncdRing(); // Adjust size if needed
+
+                // Map the operation groups
+                operationGroups = {
+                        {"crud1", {crudOperations1, crudRingBuffer1}},
+                        {"crud2", {crudOperations2, crudRingBuffer2}}
+                };
+#endif				
  #if 0
                 std::array<int, 110> crudOperations1Enums = {
                         SAI_OBJECT_TYPE_NULL,

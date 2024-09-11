@@ -19,7 +19,7 @@ namespace sairedis
                     _In_ const std::string& getResponseTable,
                     _In_ const std::string& tempPrefix,
                     _In_ bool modifyRedis,
-                    _In_ std::shared_ptr<std::mutex> mutex = nullptr);
+                    _In_ std::shared_ptr<std::timed_mutex> mutex = nullptr);
 
             virtual ~RedisSelectableChannel() = default;
 
@@ -66,6 +66,7 @@ namespace sairedis
 
             bool m_protected;
 
-            std::shared_ptr<std::mutex> m_mutex;
+            //std::shared_ptr<std::mutex> m_mutex;
+            std::shared_ptr<std::timed_mutex> m_mutex;
     };
 }

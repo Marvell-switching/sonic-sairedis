@@ -14,7 +14,7 @@ namespace syncd
 
             RedisNotificationProducer(
                     _In_ const std::string& dbName,
-                    _In_ std::shared_ptr<std::mutex> t_mutex = nullptr);
+                    _In_ std::shared_ptr<std::timed_mutex> t_mutex = nullptr);
 
             virtual ~RedisNotificationProducer() = default;
 
@@ -33,6 +33,7 @@ namespace syncd
             
             bool m_protected;
 
-            std::shared_ptr<std::mutex> m_mutex;
+            //std::shared_ptr<std::mutex> m_mutex;
+            std::shared_ptr<std::timed_mutex> m_mutex;
     };
 }
