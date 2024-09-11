@@ -16,6 +16,10 @@ namespace syncd
                     _In_ const std::string& dbName,
                     _In_ std::shared_ptr<std::mutex> t_mutex = nullptr);
 
+            RedisNotificationProducer(
+                    _In_ const std::string& dbName,
+                    _In_ bool isProtected);
+
             virtual ~RedisNotificationProducer() = default;
 
         public:

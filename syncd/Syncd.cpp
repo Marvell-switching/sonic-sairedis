@@ -71,6 +71,7 @@ using namespace std::placeholders;
                     auto lambda = [=](){ _func_call(std::move(_kco), _seq); }; \
                     pushRingBuffer(_ringBuffer, lambda); \
                 } else { \
+                    m_sequencer->waitSequenceNumber(_seq); \
                     _func_call(_kco, _seq); \
                 } \
             } \
@@ -193,7 +194,7 @@ Syncd::Syncd(
     m_profileIter = m_profileMap.begin();
 
     // we need STATE_DB ASIC_DB and COUNTERS_DB
-    m_dbAsic = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbAsic, 0, true);
+    m_dbAsic = std::make_shared<swss::DBConnector>(m_contextConfig->m_dbAsic, 0, false, true);
     m_mdioIpcServer = std::make_shared<MdioIpcServer>(m_vendorSai, m_commandLineOptions->m_globalContext);
 
     if (m_contextConfig->m_zmqEnable)
@@ -209,7 +210,7 @@ Syncd::Syncd(
     else
     {
     // restore with no lock 
-        m_notifications = std::make_shared<RedisNotificationProducer>(m_contextConfig->m_dbAsic);//, m_redis_mutex);
+        m_notifications = std::make_shared<RedisNotificationProducer>(m_contextConfig->m_dbAsic, true);//, m_redis_mutex);
 
         m_enableSyncMode = m_commandLineOptions->m_redisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
 

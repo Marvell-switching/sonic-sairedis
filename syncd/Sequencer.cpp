@@ -178,8 +178,8 @@ int Sequencer::seqGetNext(int seq_num) {
 
 bool Sequencer::amINext(int seq_num) {
     bool ret = false;
-    int next = seqGetNext(next_seq_to_send);
-    ret =  (seq_num == next) ? true : false;
+    // int next = seqGetNext(next_seq_to_send);
+    ret =  (seq_num == next_seq_to_send) ? true : false;
     return ret;
 }
 
