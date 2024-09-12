@@ -761,10 +761,9 @@ namespace syncd
                 };
 #endif           
         std::map<sai_object_type_t, SyncdRing*> saiObj2RB;
-        // {
-        //         {SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, nullptr},
-        //         {SAI_OBJECT_TYPE_ROUTE_ENTRY, nullptr}
-        // };
+        SyncdRing *crudRingBuffer1;
+        SyncdRing *crudRingBuffer2;
+        SyncdRing *miscRingBuffer;
 
         sai_status_t initializeOperationGroups() {
                 
@@ -801,8 +800,9 @@ namespace syncd
                 // }
  
                 // Allocate new SyncdRing instances for each operation group
-                auto crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
-                auto crudRingBuffer2 = new SyncdRing(); // Adjust size if needed
+                crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
+                crudRingBuffer2 = new SyncdRing(); // Adjust size if needed
+                miscRingBuffer = new SyncdRing(); // Adjust size if needed
 
                 saiObj2RB[SAI_OBJECT_TYPE_NEIGHBOR_ENTRY] = crudRingBuffer1;
                 saiObj2RB[SAI_OBJECT_TYPE_ROUTE_ENTRY] = crudRingBuffer2;
@@ -810,7 +810,8 @@ namespace syncd
                 // Map the operation groups
                 operationGroups = {
                         {"crud1",  crudRingBuffer1},
-                        {"crud2", crudRingBuffer2}
+                        {"crud2", crudRingBuffer2},
+                        {"misc", miscRingBuffer}
                 };
 
                 return SAI_STATUS_SUCCESS;

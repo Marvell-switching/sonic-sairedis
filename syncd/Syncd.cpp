@@ -63,15 +63,17 @@ using namespace std::placeholders;
     { \
             sequencer::seq_t _seq; \
             SyncdRing* _ringBuffer; \
+            int a = 1; \
             bool api_ret = getApiRingBuffer(_kco, _ringBuffer); \
             if (api_ret) { \
+                a = 2; \
                 sequencer::SequenceStatus _ret = m_sequencer->allocateSequenceNumber(&_seq);\
                 if (_ret != sequencer::SUCCESS) KCO_DEBUG(_kco); \
                 if ( _ringBuffer  ) { \
                     auto lambda = [=](){ _func_call(std::move(_kco), _seq); }; \
                     pushRingBuffer(_ringBuffer, lambda); \
                 } else { \
-                    m_sequencer->waitSequenceNumber(_seq); \
+                    if(a == 0) m_sequencer->waitSequenceNumber(_seq); \
                     _func_call(_kco, _seq); \
                 } \
             } \
@@ -301,19 +303,17 @@ Syncd::Syncd(
         abort();
     }
 
-// multi thread syncd -> start
-    for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
-        const std::string& groupName = it->first;
-        const SyncdRing* rb = it->second;
+
+    for (auto& pair : operationGroups) {
+        const std::string& groupName = pair.first;
+        SyncdRing* rb = pair.second;
 
         if (rb) {
-		    
             // Create a thread for each operation group to pop from the ring buffer
             ringBufferThreads[groupName] = std::thread(&Syncd::popRingBuffer, this, rb, groupName);
-			LogToModuleFile("1","start ring buff");
+            LogToModuleFile("1","start ring buff");
         }
     }
-// multi thread syncd -> end
 
     SWSS_LOG_NOTICE("syncd started");
 }
@@ -366,14 +366,13 @@ Syncd::~Syncd()
         }
     }
 
-    // for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
-    //     auto& group = it->second;
-    //     if (group.ringBuffer) {
-    //         LogToModuleFile("1", "delete ring buffer");
-    //         delete group.ringBuffer;
-    //         group.ringBuffer = nullptr;
-    //     }
-    // }
+    for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
+         auto& ringBuffer = it->second;
+         if (ringBuffer) {
+             LogToModuleFile("1", "delete ring buffer");
+             delete ringBuffer;
+         }
+    }
 
 // multi thread syncd -> end
 }
@@ -5478,8 +5477,17 @@ bool Syncd::getApiRingBuffer(
     // }
 
     if (!found) {
-        LogToModuleFile("1", "didn't match ring buffer to api operation: {} key {}", valueStr, key.c_str());
+        if((SAI_OBJECT_TYPE_SWITCH != objectType))
+        {
+            found = true;
+            ringBuffer = miscRingBuffer;
+        }
+        else
+        {
+            LogToModuleFile("1", "didn't match ring buffer to api key {}",  key.c_str());
+        }            
     }
+
     return true;
 }
 
