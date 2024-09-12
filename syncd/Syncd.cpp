@@ -329,7 +329,7 @@ void Syncd::popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName)
 	}
     SWSS_LOG_ENTER();
     ringBuffer->Started = true;
-    
+    LogToModuleFile("1", "ring buff thread {}",threadName);
     while (!ring_thread_exited)
     {
         LogToModuleFile("1", "wait popRingBuffer thread!");
@@ -5437,7 +5437,7 @@ bool Syncd::findOperationGroup(
     }
 
     if (!found) {
-        LogToModuleFile("1", "value {} not found in any operation group", valueStr);
+        LogToModuleFile("1", "op not found in any operation group");
     }
 
     return found;
