@@ -615,7 +615,7 @@ namespace syncd
 
 // multi thread syncd - start
             std::map<std::string, std::thread> ringBufferThreads;
-            std::map<std::string, SyncdRing*> operationGroups;
+            std::map<std::string, OperationGroup> operationGroups;
             std::atomic<bool> ring_thread_exited{false};
 
             bool getApiRingBuffer(
@@ -628,11 +628,10 @@ namespace syncd
 
 
             bool findOperationGroup(
-                sai_object_type_t objectType,
+                const std::string& valueStr,
                 SyncdRing*& ringBuffer
             );
 
-#if 0
             std::string getNameByRingBuffer(SyncdRing* ringBuffer) 
             {
                 for (const auto& pair : operationGroups) {
@@ -642,7 +641,7 @@ namespace syncd
                 }
 
                 return "Not_found"; // Return a default value if not found
-            }            
+            }
 
                 // Declare saiObjectTypes as a member variable
             std::vector<SaiObjectType> saiObjectTypes = {                
@@ -759,12 +758,6 @@ namespace syncd
                         {SAI_OBJECT_TYPE_POE_PORT, "SAI_OBJECT_TYPE_POE_PORT"},
                         {SAI_OBJECT_TYPE_MAX, "SAI_OBJECT_TYPE_MAX"}
                 };
-#endif           
-        std::map<sai_object_type_t, SyncdRing*> saiObj2RB;
-        // {
-        //         {SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, nullptr},
-        //         {SAI_OBJECT_TYPE_ROUTE_ENTRY, nullptr}
-        // };
 
         sai_status_t initializeOperationGroups() {
                 
@@ -775,42 +768,39 @@ namespace syncd
            
 
 
-                // std::array<int, 2> crudOperations1Enums = {
-                //         SAI_OBJECT_TYPE_FDB_ENTRY,
-                //         SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
-                // };
+                std::array<int, 2> crudOperations1Enums = {
+                        SAI_OBJECT_TYPE_FDB_ENTRY,
+                        SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
+                };
 
-                // std::array<int, 1> crudOperations2Enums = {
-                //         SAI_OBJECT_TYPE_ROUTE_ENTRY
-                // };
+                std::array<int, 1> crudOperations2Enums = {
+                        SAI_OBJECT_TYPE_ROUTE_ENTRY
+                };
 
-                // // Populate crudOperations1 using the enums array
-                // std::set<std::string> crudOperations1;
-                // for (const auto& item : saiObjectTypes) {
-                //         if (std::find(crudOperations1Enums.begin(), crudOperations1Enums.end(), item.enumValue) != crudOperations1Enums.end()) {
-                //                 crudOperations1.insert(item.enumString);
-                //         }
-                // }
+                // Populate crudOperations1 using the enums array
+                std::set<std::string> crudOperations1;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations1Enums.begin(), crudOperations1Enums.end(), item.enumValue) != crudOperations1Enums.end()) {
+                                crudOperations1.insert(item.enumString);
+                        }
+                }
 
-                // // Populate crudOperations2 using the enums array
-                // std::set<std::string> crudOperations2;
-                // for (const auto& item : saiObjectTypes) {
-                //         if (std::find(crudOperations2Enums.begin(), crudOperations2Enums.end(), item.enumValue) != crudOperations2Enums.end()) {
-                //                 crudOperations2.insert(item.enumString);
-                //         }
-                // }
+                // Populate crudOperations2 using the enums array
+                std::set<std::string> crudOperations2;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations2Enums.begin(), crudOperations2Enums.end(), item.enumValue) != crudOperations2Enums.end()) {
+                                crudOperations2.insert(item.enumString);
+                        }
+                }
  
                 // Allocate new SyncdRing instances for each operation group
                 auto crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
                 auto crudRingBuffer2 = new SyncdRing(); // Adjust size if needed
-
-                saiObj2RB[SAI_OBJECT_TYPE_NEIGHBOR_ENTRY] = crudRingBuffer1;
-                saiObj2RB[SAI_OBJECT_TYPE_ROUTE_ENTRY] = crudRingBuffer2;
                
                 // Map the operation groups
                 operationGroups = {
-                        {"crud1",  crudRingBuffer1},
-                        {"crud2", crudRingBuffer2}
+                        {"crud1", {crudOperations1, crudRingBuffer1}},
+                        {"crud2", {crudOperations2, crudRingBuffer2}}
                 };
 
                 return SAI_STATUS_SUCCESS;

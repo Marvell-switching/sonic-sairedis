@@ -304,13 +304,13 @@ Syncd::Syncd(
 // multi thread syncd -> start
     for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
         const std::string& groupName = it->first;
-        const SyncdRing* rb = it->second;
+        const OperationGroup& group = it->second;
 
-        if (rb) {
+        if (group.ringBuffer) {
 		    
             // Create a thread for each operation group to pop from the ring buffer
-            ringBufferThreads[groupName] = std::thread(&Syncd::popRingBuffer, this, rb, groupName);
-			LogToModuleFile("1","start ring buff");
+            ringBufferThreads[groupName] = std::thread(&Syncd::popRingBuffer, this, group.ringBuffer, groupName);
+			LogToModuleFile("1","start ring buff {}",getNameByRingBuffer(group.ringBuffer));
         }
     }
 // multi thread syncd -> end
@@ -324,7 +324,7 @@ void Syncd::popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName)
     pthread_setname_np(pthread_self(), threadName.c_str());
     if (!ringBuffer || ringBuffer->Started)
 	{
-		LogToModuleFile("1", "popRingBuffer return");
+		LogToModuleFile(getNameByRingBuffer(ringBuffer), "popRingBuffer return");
         return;
 	}
     SWSS_LOG_ENTER();
@@ -332,18 +332,18 @@ void Syncd::popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName)
     
     while (!ring_thread_exited)
     {
-        LogToModuleFile("1", "wait popRingBuffer thread!");
+        LogToModuleFile(getNameByRingBuffer(ringBuffer), "wait popRingBuffer thread!");
         std::unique_lock<std::mutex> lock(ringBuffer->mtx);
         ringBuffer->cv.wait(lock, [&](){ return !ringBuffer->IsEmpty(); });
-        LogToModuleFile("1", "Stop waiting");
+        LogToModuleFile(getNameByRingBuffer(ringBuffer), "Stop waiting");
         ringBuffer->Idle = false;
         AnyTask func;
          while (ringBuffer->pop(func)) {
-            LogToModuleFile("1", "try to execute func");
+            LogToModuleFile(getNameByRingBuffer(ringBuffer), "try to execute func");
             func();
-            LogToModuleFile("1", "Execute func successful");
+            LogToModuleFile(getNameByRingBuffer(ringBuffer), "Execute func successful");
         }
-        LogToModuleFile("1", "no more functions to execute");
+        LogToModuleFile(getNameByRingBuffer(ringBuffer), "no more functions to execute");
         ringBuffer->doTask();
         ringBuffer->Idle = true;
     }
@@ -366,14 +366,14 @@ Syncd::~Syncd()
         }
     }
 
-    // for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
-    //     auto& group = it->second;
-    //     if (group.ringBuffer) {
-    //         LogToModuleFile("1", "delete ring buffer");
-    //         delete group.ringBuffer;
-    //         group.ringBuffer = nullptr;
-    //     }
-    // }
+    for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
+        auto& group = it->second;
+        if (group.ringBuffer) {
+            LogToModuleFile(getNameByRingBuffer(group.ringBuffer), "delete ring buffer");
+            delete group.ringBuffer;
+            group.ringBuffer = nullptr;
+        }
+    }
 
 // multi thread syncd -> end
 }
@@ -5389,52 +5389,47 @@ void Syncd::getObjectTypeByOperation(
         std::string strObjectType = key.substr(0, key.find(":"));
         sai_deserialize_object_type(strObjectType, objectType);
     }
-    // else if (op == REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_QUERY ||
-    //          op == REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_QUERY)
-    // {
-    //     auto& values = kfvFieldsValues(kco);
-    //     if (values.size() > 0) 
-    //     {
-    //         sai_deserialize_object_type(fvValue(values[0]), objectType);
-    //         LogToModuleFile("1", "op {} has object id ", op.c_str(), sai_serialize_object_type(objectType).c_str());
-    //     }
-    //     else {
-    //         LogToModuleFile("1", "Error op {} has no value", op.c_str());
-    //     }
-    // }    
-    // else if (op == REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY)
-    // {
-    //     std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kco);
-    //     sai_deserialize_object_type(fvValue(values.back()), objectType);
-    //     LogToModuleFile("1", "op {} has object id ", op.c_str(), sai_serialize_object_type(objectType).c_str());    
-    // }
+    else if (op == REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_QUERY ||
+             op == REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_QUERY)
+    {
+        auto& values = kfvFieldsValues(kco);
+        if (values.size() > 0) 
+        {
+            sai_deserialize_object_type(fvValue(values[0]), objectType);
+            LogToModuleFile("1", "op {} has object id ", op.c_str(), sai_serialize_object_type(objectType).c_str());
+        }
+        else {
+            LogToModuleFile("1", "Error op {} has no value", op.c_str());
+        }
+    }    
+    else if (op == REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY)
+    {
+        std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kco);
+        sai_deserialize_object_type(fvValue(values.back()), objectType);
+        LogToModuleFile("1", "op {} has object id ", op.c_str(), sai_serialize_object_type(objectType).c_str());    
+    }
 }
 
 
 // multi thread syncd  -> findOperationGroup
 // Internal function to find and log operation group details
 bool Syncd::findOperationGroup(
-    sai_object_type_t objectType,
+    const std::string& valueStr,
     SyncdRing*& ringBuffer
 ) {
     bool found = false;
 
-    // for (const auto& pair : operationGroups) {
-    //     //const std::string& groupName = pair.first;
-    //     const OperationGroup& operationGroup = pair.second;
+    for (const auto& pair : operationGroups) {
+        //const std::string& groupName = pair.first;
+        const OperationGroup& operationGroup = pair.second;
 
-    //     if (operationGroup.operations.find(valueStr) != operationGroup.operations.end()) {
-    //         ringBuffer = operationGroup.ringBuffer;
-    //         //LogToModuleFile("1", "Found {} in operation group: {}", valueStr, groupName);
-    //         LogToModuleFile("1", "Ring buffer pointer: {}", reinterpret_cast<void*>(ringBuffer));
-    //         found = true;
-    //         break;
-    //     }
-    // }
-    if(saiObj2RB.find(objectType) != saiObj2RB.end()) {
-        ringBuffer = saiObj2RB[objectType];
-        LogToModuleFile("1", "Ring buffer pointer: {}", reinterpret_cast<void*>(ringBuffer));
-        found = true;
+        if (operationGroup.operations.find(valueStr) != operationGroup.operations.end()) {
+            ringBuffer = operationGroup.ringBuffer;
+            //LogToModuleFile("1", "Found {} in operation group: {}", valueStr, groupName);
+            LogToModuleFile("1", "Ring buffer pointer: {}", reinterpret_cast<void*>(ringBuffer));
+            found = true;
+            break;
+        }
     }
 
     if (!found) {
@@ -5452,30 +5447,32 @@ bool Syncd::getApiRingBuffer(
     ringBuffer = nullptr;     
 
     auto& key = kfvKey(kco);
+    auto& op = kfvOp(kco);    
+
+    SWSS_LOG_DEBUG("op: %s key:%s", op.c_str(), key.c_str());
+    LogToModuleFile("1", "op: {} key: {}", op.c_str(), key.c_str());
+
+    bool found = false;
+    std::string valueStr = op.c_str();
+
 
     if (key.length() == 0)
     {
+        LogToModuleFile("1", "no elements in m_buffer");
         return false;
     }
 
-    // auto& op = kfvOp(kco);    
+    found = findOperationGroup(valueStr, ringBuffer);
 
-    // SWSS_LOG_DEBUG("op: %s key:%s", op.c_str(), key.c_str());
+    if (!found) {
+        sai_object_type_t objectType = SAI_OBJECT_TYPE_NULL;
+        getObjectTypeByOperation(kco, objectType);
 
-    bool found = false;
-    // std::string valueStr = op.c_str();
-
-    // found = findOperationGroup(valueStr, ringBuffer);
-
-    // if (!found) {
-    sai_object_type_t objectType = SAI_OBJECT_TYPE_NULL;
-    getObjectTypeByOperation(kco, objectType);
-
-    if (SAI_OBJECT_TYPE_NULL != objectType) { // valid object type
-        // valueStr = sai_serialize_object_type(objectType);
-        found = findOperationGroup(objectType, ringBuffer);
+        if (SAI_OBJECT_TYPE_NULL != objectType) { // valid object type
+            valueStr = sai_serialize_object_type(objectType);
+            found = findOperationGroup(valueStr, ringBuffer);
+        }
     }
-    // }
 
     if (!found) {
         LogToModuleFile("1", "didn't match ring buffer to api operation: {} key {}", valueStr, key.c_str());
@@ -5644,14 +5641,12 @@ void Syncd::run()
             else if (sel == m_flexCounter.get())
             {
 // multi thread syncd -> SEQ_EXEC
-                // SEQ_EXEC(processFlexCounterEvent(*(swss::ConsumerTable*)sel) );
-                processFlexCounterEvent(*(swss::ConsumerTable*)sel);
+                SEQ_EXEC(processFlexCounterEvent(*(swss::ConsumerTable*)sel) );
             }
             else if (sel == m_flexCounterGroup.get())
             {
 // multi thread syncd -> SEQ_EXEC
-                // SEQ_EXEC( processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel) );
-                processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
+                SEQ_EXEC( processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel) );
             }
             else if (sel == m_selectableChannel.get())
             {
