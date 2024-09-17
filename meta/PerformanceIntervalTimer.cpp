@@ -24,6 +24,12 @@ void PerformanceIntervalTimer::start()
     SWSS_LOG_ENTER();
 
     m_start = std::chrono::high_resolution_clock::now();
+
+
+    if ( m_count == 0 ) {
+        m_start_orig = m_start;        
+    }
+
 }
 
 void PerformanceIntervalTimer::stop()
@@ -48,7 +54,9 @@ void PerformanceIntervalTimer::inc(
     {
         if (m_enable)
         {
-            SWSS_LOG_NOTICE("%" PRIu64 " (calls %" PRIu64 ") %s op took: %" PRIu64 " ms", m_count, m_calls, m_msg.c_str(), m_total/1000000);
+            //SWSS_LOG_NOTICE("%" PRIu64 " (calls %" PRIu64 ") %s op took: %" PRIu64 " ms", m_count, m_calls, m_msg.c_str(), m_total/1000000);
+            uint64_t start_total = std::chrono::duration_cast<std::chrono::nanoseconds>(m_stop-m_start_orig).count();
+            SWSS_LOG_NOTICE("%" PRIu64 " (calls %" PRIu64 ") %s op took: %" PRIu64 " ms during %" PRIu64, m_count, m_calls, m_msg.c_str(), m_total/1000000, start_total/1000000);
         }
 
         reset();

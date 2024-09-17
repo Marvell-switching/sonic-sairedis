@@ -156,7 +156,9 @@ namespace syncd
 
             sai_status_t processSingleEvent(
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                    _In_ int sequenceNumber);
+                    _In_ int sequenceNumber,
+                    _In_ const std::string &objectTypeStr,
+                    _In_ const std::string &ringBufferName);
 
             sai_status_t processAttrCapabilityQuery(
                     _In_ const swss::KeyOpFieldsValuesTuple &kco,
@@ -645,9 +647,10 @@ namespace syncd
             std::map<std::string, OperationGroup> operationGroups;
             std::atomic<bool> ring_thread_exited{false};
 
-            void getApiRingBuffer(
+            bool getApiRingBuffer(
                         _In_ const swss::KeyOpFieldsValuesTuple &kco,
-                        _Out_ SyncdRing*& ringBuffer);
+                        _Out_ SyncdRing*& ringBuffer,
+                        _Out_ std::string& objectTypeStr);
                         
             void getObjectTypeByOperation(
                         _In_ swss::KeyOpFieldsValuesTuple kco,
@@ -667,7 +670,7 @@ namespace syncd
                         }
                 }
 
-                return "Not_found"; // Return a default value if not found
+                return "non"; // Return a default value if not found
             }
 
                 // Declare saiObjectTypes as a member variable
@@ -792,8 +795,7 @@ namespace syncd
                 // make sure all object types are accounted for
                 //if(saiObjectTypes.size() != (SAI_OBJECT_TYPE_MAX+1))
                 //        return SAI_STATUS_FAILURE;
-#if 1 
-              
+          
 
 #if 0
 
@@ -956,9 +958,15 @@ namespace syncd
                         {"misc", {miscOperations, miscRingBuffer}},
                 };
 #endif
-#if 1
-                std::array<int, 1> crudOperations1Enums = {
-                        SAI_OBJECT_TYPE_FDB_ENTRY                      
+#if 0
+                std::array<int, 7> crudOperations1Enums = {
+                        SAI_OBJECT_TYPE_ACL_TABLE,
+                        SAI_OBJECT_TYPE_ACL_ENTRY,
+                        SAI_OBJECT_TYPE_ACL_COUNTER,
+                        SAI_OBJECT_TYPE_ACL_RANGE,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_ACL_TABLE_CHAIN_GROUP
                 };
 
                 std::array<int, 1> crudOperations2Enums = {
@@ -991,6 +999,90 @@ namespace syncd
                 operationGroups = {
                         {"crud1", {crudOperations1, crudRingBuffer1}},
                         {"crud2", {crudOperations2, crudRingBuffer2}}
+                };
+#endif
+#if 0
+                std::array<int, 7> crudOperations1Enums = {
+                        SAI_OBJECT_TYPE_ACL_TABLE,
+                        SAI_OBJECT_TYPE_ACL_ENTRY,
+                        SAI_OBJECT_TYPE_ACL_COUNTER,
+                        SAI_OBJECT_TYPE_ACL_RANGE,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP,
+                        SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER,
+                        SAI_OBJECT_TYPE_ACL_TABLE_CHAIN_GROUP
+                };
+
+                std::array<int, 1> crudOperations2Enums = {
+                        SAI_OBJECT_TYPE_ROUTE_ENTRY
+                };
+
+                
+                std::array<int, 1> crudOperations3Enums = {
+                        SAI_OBJECT_TYPE_PORT
+                };
+
+                // Populate crudOperations1 using the enums array
+                std::set<std::string> crudOperations1;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations1Enums.begin(), crudOperations1Enums.end(), item.enumValue) != crudOperations1Enums.end()) {
+                                crudOperations1.insert(item.enumString);
+                        }
+                }
+
+                // Populate crudOperations2 using the enums array
+                std::set<std::string> crudOperations2;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations2Enums.begin(), crudOperations2Enums.end(), item.enumValue) != crudOperations2Enums.end()) {
+                                crudOperations2.insert(item.enumString);
+                        }
+                }
+
+                // Populate crudOperations3 using the enums array
+                std::set<std::string> crudOperations3;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations3Enums.begin(), crudOperations3Enums.end(), item.enumValue) != crudOperations3Enums.end()) {
+                                crudOperations3.insert(item.enumString);
+                        }
+                }
+ 
+                // Allocate new SyncdRing instances for each operation group
+                auto crudRingBuffer1 = new SyncdRing(); // Adjust size if needed
+                auto crudRingBuffer2 = new SyncdRing(); // Adjust size if needed
+                auto crudRingBuffer3 = new SyncdRing(); // Adjust size if needed
+
+                // Map the operation groups
+                operationGroups = {
+                        {"crud1", {crudOperations1, crudRingBuffer1}},
+                        {"crud2", {crudOperations2, crudRingBuffer2}},
+                        {"crud3", {crudOperations2, crudRingBuffer3}}
+                };
+#endif
+#if 1
+                std::array<int, 2> crudOperations2Enums = {
+                        SAI_OBJECT_TYPE_ROUTE_ENTRY,
+                        SAI_OBJECT_TYPE_VIRTUAL_ROUTER
+                };
+
+                // Populate crudOperations2 using the enums array
+                std::set<std::string> crudOperations2;
+                for (const auto& item : saiObjectTypes) {
+                        if (std::find(crudOperations2Enums.begin(), crudOperations2Enums.end(), item.enumValue) != crudOperations2Enums.end()) {
+                                crudOperations2.insert(item.enumString);
+                        }
+                }
+ 
+                // Allocate new SyncdRing instances for each operation group
+                auto crudRingBuffer2 = new SyncdRing(); // Adjust size if needed
+
+                // Map the operation groups
+                operationGroups = {
+                        {"crud2", {crudOperations2, crudRingBuffer2}}
+                };
+#endif	
+#if 0
+
+                // Map the operation groups
+                operationGroups = {                        
                 };
 #endif				
  #if 0
@@ -1123,12 +1215,6 @@ namespace syncd
                 // Map the operation groups
                 operationGroups = {
 			        	{"crud1", {crudOperations1, crudRingBuffer1}},
-                        // Add other groups here...
-                };
-#endif
-#if 0
-                // Map the operation groups
-                operationGroups = {
                         // Add other groups here...
                 };
 #endif

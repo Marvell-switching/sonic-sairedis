@@ -16,9 +16,11 @@
 #include <ctime>
 #include <thread>
 
-#define SYNCD_LOGGER_VER " V6 "
+#define SYNCD_LOGGER_VER " V9 "
 #define MAX_LOG_SIZE    (10 *50 * 1024) /* 50 KB */
-#define ENABLE_LOGGING  0
+#define ENABLE_LOGGING_LOW_P   1
+#define ENABLE_LOGGING_MED_P   1
+#define ENABLE_LOGGING_HIGH_P  1
 
 // Define a mutex for thread safety
 static std::mutex logMutex;
@@ -99,11 +101,26 @@ static void logFormattedMessage(const std::string& funcName, const std::string& 
     // Write the full message to the log file
     writeToLogFile(funcName, fileNum, oss.str());
 }
-#if ENABLE_LOGGING
+#if ENABLE_LOGGING_LOW_P
 // Macro for easy logging with formatting
 #define LogToModuleFile(fileNum, format, ...) logFormattedMessage(__func__, fileNum, format, ##__VA_ARGS__)
 #else
 #define LogToModuleFile(fileNum, format, ...)
 #endif
+
+#if ENABLE_LOGGING_MED_P
+// Macro for easy logging with formatting
+#define LogToModuleFileMp(fileNum, format, ...) logFormattedMessage(__func__, fileNum, format, ##__VA_ARGS__)
+#else
+#define LogToModuleFileMp(fileNum, format, ...)
+#endif
+
+#if ENABLE_LOGGING_HIGH_P
+// Macro for easy logging with formatting
+#define LogToModuleFileHp(fileNum, format, ...) logFormattedMessage(__func__, fileNum, format, ##__VA_ARGS__)
+#else
+#define LogToModuleFileHp(fileNum, format, ...)
+#endif
+
 
 #endif // LOGGER_H

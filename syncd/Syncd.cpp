@@ -45,7 +45,22 @@ using namespace saimeta;
 using namespace sairediscommon;
 using namespace std::placeholders;
 
-std::shared_ptr<sai_status_t[]> status_list_safe(
+
+#define COLLECT_STATISTIC 1
+#ifdef COLLECT_STATISTIC 
+void collectStatistic(
+    const std::string& key,
+    const std::string& op,
+    const std::string& objectTypeStr,
+    const std::string& ringBufferName,
+    const std::chrono::steady_clock::duration executionTime);
+
+void startCollectStatistic();
+void stopCollectStatistic();
+
+#endif
+
+std::shared_ptr<sai_status_t[]> status_list_safe(   
     uint32_t status_count,
     const sai_status_t *status_list
  )
@@ -230,7 +245,7 @@ Syncd::Syncd(
 
     if (initializeOperationGroups() != SAI_STATUS_SUCCESS)
     {
-	    LogToModuleFile("init","FATAL: failed to initialize operation groups");
+	    LogToModuleFileHp("init","FATAL: failed to initialize operation groups");
         SWSS_LOG_ERROR("FATAL: failed to initialize operation groups");
         abort();
     }
@@ -243,7 +258,7 @@ Syncd::Syncd(
 		    
             // Create a thread for each operation group to pop from the ring buffer
             ringBufferThreads[groupName] = std::thread(&Syncd::popRingBuffer, this, group.ringBuffer, groupName);
-			LogToModuleFile("1","start ring buff {}",getNameByRingBuffer(group.ringBuffer));
+			LogToModuleFileMp("1","start ring buff {}",getNameByRingBuffer(group.ringBuffer));
         }
     }
 
@@ -255,7 +270,7 @@ void Syncd::popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName)
     pthread_setname_np(pthread_self(), threadName.c_str());
     if (!ringBuffer || ringBuffer->Started)
 	{
-		LogToModuleFile(getNameByRingBuffer(ringBuffer), "popRingBuffer return");
+		LogToModuleFile(threadName, "popRingBuffer return");
         return;
 	}
     SWSS_LOG_ENTER();
@@ -263,18 +278,18 @@ void Syncd::popRingBuffer(SyncdRing* ringBuffer, const std::string& threadName)
     
     while (!ring_thread_exited)
     {
-        LogToModuleFile(getNameByRingBuffer(ringBuffer), "wait popRingBuffer thread!");
+        LogToModuleFileMp(threadName, "wait popRingBuffer thread!");
         std::unique_lock<std::mutex> lock(ringBuffer->mtx);
         ringBuffer->cv.wait(lock, [&](){ return !ringBuffer->IsEmpty(); });
-        LogToModuleFile(getNameByRingBuffer(ringBuffer), "Stop waiting");
+        LogToModuleFile(threadName, "Stop waiting");
         ringBuffer->Idle = false;
         AnyTask func;
          while (ringBuffer->pop(func)) {
-            LogToModuleFile(getNameByRingBuffer(ringBuffer), "try to execute func");
+            LogToModuleFileMp(threadName, "try to execute func");
             func();
-            LogToModuleFile(getNameByRingBuffer(ringBuffer), "Execute func successful");
+            LogToModuleFileMp(threadName, "Execute func successful");
         }
-        LogToModuleFile(getNameByRingBuffer(ringBuffer), "no more functions to execute");
+        LogToModuleFile(threadName, "no more functions to execute");
         ringBuffer->doTask();
         ringBuffer->Idle = true;
     }
@@ -298,7 +313,7 @@ Syncd::~Syncd()
     for (auto it = operationGroups.begin(); it != operationGroups.end(); ++it) {
         auto& group = it->second;
         if (group.ringBuffer) {
-            LogToModuleFile(getNameByRingBuffer(group.ringBuffer), "delete ring buffer");
+            LogToModuleFileMp("1", "delete ring buffer");
             delete group.ringBuffer;
             group.ringBuffer = nullptr;
         }
@@ -389,6 +404,7 @@ void Syncd::processEvent(
         _In_ sairedis::SelectableChannel& consumer)
 {
     SWSS_LOG_ENTER();
+    //int counter = 0;
     // static int entries = 0;
 
     // LogToModuleFile("1", "!!!processEvent, ITERATION: {} m_enableSyncMode {}!!!", entries++, m_enableSyncMode);
@@ -406,58 +422,81 @@ void Syncd::processEvent(
          */
         LogToModuleFile("1", "before consumer.pop");
         consumer.pop(kco, isInitViewMode());
-        LogToModuleFile("1", "after consumer.pop");
+        LogToModuleFileMp("1", "after consumer.pop");
         SyncdRing* ringBuffer;
-        getApiRingBuffer(kco, ringBuffer);
-
-        LogToModuleFile("1","getApiRingBuffer end");
-
-        int sequenceNumber;
-        if(!m_sequencer->allocateSequenceNumber(&sequenceNumber))
+        std::string objectTypeStr = "NULL";
+        std::string ringBufferName = "non";    
+        if (getApiRingBuffer(kco, ringBuffer, objectTypeStr))
         {
-            LogToModuleFile("1", "Failed to allocate sequence number");
-            //todo: handle wait until sequence number is available with timeout 
+            //counter = 0;
+            LogToModuleFileMp("1","getApiRingBuffer end");
+
+            int sequenceNumber;
+            if(!m_sequencer->allocateSequenceNumber(&sequenceNumber))
+            {
+                LogToModuleFile("1", "Failed to allocate sequence number");
+                //todo: handle wait until sequence number is available with timeout 
+            }
+            else {
+                LogToModuleFileMp("1", "Allocated sequence number: {}", sequenceNumber);
+            }
+
+            // auto& key = kfvKey(kco);
+            // auto& op = kfvOp(kco);
+            // LogToModuleFile("1", "sequenceNumber: {} op: {} key: {}", sequenceNumber,op.c_str(), key.c_str());
+
+            if (ringBuffer) {
+                ringBufferName = getNameByRingBuffer(ringBuffer);
+                LogToModuleFileMp("1", "push processSingleEvent with sequenceNumber {} to ring buffer {} ",sequenceNumber, ringBufferName);
+                auto lambda = [=](){
+                    processSingleEvent(kco, sequenceNumber,ringBufferName,objectTypeStr);
+                };
+                pushRingBuffer(ringBuffer, lambda);
+            } 
+            // operation not found in operationGroups and will be executed without ring buffer
+            else {
+                LogToModuleFileMp("1", "processSingleEvent with sequenceNumber {} in main thread",sequenceNumber);
+                processSingleEvent(kco, sequenceNumber, ringBufferName, objectTypeStr);
+            }  
         }
-        else {
-            LogToModuleFile("1", "Allocated sequence number: {}", sequenceNumber);
-        }
-
-        // auto& key = kfvKey(kco);
-        // auto& op = kfvOp(kco);
-        // LogToModuleFile("1", "sequenceNumber: {} op: {} key: {}", sequenceNumber,op.c_str(), key.c_str());
-
-        if (ringBuffer) {
-			LogToModuleFile("1", "push processSingleEvent with sequenceNumber {} to ring buffer {} ",sequenceNumber, getNameByRingBuffer(ringBuffer));
-            auto lambda = [=](){
-                processSingleEvent(kco, sequenceNumber);
-            };
-            pushRingBuffer(ringBuffer, lambda);
-        } 
-        // operation not found in operationGroups and will be executed without ring buffer
-        else {
-			LogToModuleFile("1", "processSingleEvent with sequenceNumber {} in main thread",sequenceNumber);
-            processSingleEvent(kco, sequenceNumber);
-        }  
-
+        //else
+        //{
+        //    if (counter++>5) 
+        //    {
+        //        LogToModuleFileMp("1", "counter > 10, break");
+		//		counter=0;
+        //        break;
+        //    }            
+        //}        
     }
     while (!consumer.empty());
 }
 
 sai_status_t Syncd::processSingleEvent(
         _In_ const swss::KeyOpFieldsValuesTuple &kco, 
-        _In_ int sequenceNumber)
+        _In_ int sequenceNumber,
+        _In_ const std::string &objectTypeStr,
+        _In_ const std::string &ringBufferName  
+        )
 {
     SWSS_LOG_ENTER();
-
+    sai_status_t ret = SAI_STATUS_SUCCESS;
     auto& key = kfvKey(kco);
     auto& op = kfvOp(kco);
+#ifdef COLLECT_STATISTIC    
+    std::chrono::steady_clock::time_point startTimelocal;    
+    std::chrono::steady_clock::time_point endTimelocal;
+
+    startTimelocal = std::chrono::steady_clock::now();
+#endif
+
 
     LogToModuleFile("1","key: {} op: {} {}", key, op, std::to_string(sequenceNumber));
     //SWSS_LOG_INFO("get API for key: %s op: %s", key.c_str(), op.c_str()  );
     if (key.length() == 0)
     {
         SWSS_LOG_DEBUG("no elements in m_buffer");
-        LogToModuleFile("1", "add to lambda no elements in m_buffer sequenceNumber {}",sequenceNumber);
+        LogToModuleFileMp("1", "add to lambda no elements in m_buffer sequenceNumber {}",sequenceNumber);
         auto lambda = [=](){
              LogToModuleFile("1", "no elements in m_buffer sequenceNumber {}",sequenceNumber);
         };
@@ -469,60 +508,65 @@ sai_status_t Syncd::processSingleEvent(
     WatchdogScope ws(m_timerWatchdog, op + ":" + key, &kco);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
-        return processQuadEvent(SAI_COMMON_API_CREATE, kco, sequenceNumber);
+        ret = processQuadEvent(SAI_COMMON_API_CREATE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_REMOVE)
-        return processQuadEvent(SAI_COMMON_API_REMOVE, kco, sequenceNumber);
+        ret = processQuadEvent(SAI_COMMON_API_REMOVE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_SET)
-        return processQuadEvent(SAI_COMMON_API_SET, kco, sequenceNumber);
+        ret = processQuadEvent(SAI_COMMON_API_SET, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_GET)
-        return processQuadEvent(SAI_COMMON_API_GET, kco, sequenceNumber);
+        ret = processQuadEvent(SAI_COMMON_API_GET, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, sequenceNumber);
+        ret = processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, sequenceNumber);
+        ret = processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_BULK_SET)
-        return processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, sequenceNumber);
+        ret = processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_NOTIFY)
-        return processNotifySyncd(kco, sequenceNumber);
+        ret = processNotifySyncd(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_GET_STATS)
-        return processGetStatsEvent(kco, sequenceNumber);
+        ret = processGetStatsEvent(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_CLEAR_STATS)
-        return processClearStatsEvent(kco, sequenceNumber);
+        ret = processClearStatsEvent(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_FLUSH)
-        return processFdbFlush(kco, sequenceNumber);
+        ret = processFdbFlush(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_QUERY)
-        return processAttrCapabilityQuery(kco, sequenceNumber);
+        ret = processAttrCapabilityQuery(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_QUERY)
-        return processAttrEnumValuesCapabilityQuery(kco, sequenceNumber);
+        ret = processAttrEnumValuesCapabilityQuery(kco, sequenceNumber);
 
     if (op == REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_QUERY)
-        return processObjectTypeGetAvailabilityQuery(kco, sequenceNumber);
+        ret = processObjectTypeGetAvailabilityQuery(kco, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_START_POLL)
-        return processFlexCounterEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
+        ret = processFlexCounterEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_STOP_POLL)
-        return processFlexCounterEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
+        ret = processFlexCounterEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_SET_GROUP)
-        return processFlexCounterGroupEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
+        ret = processFlexCounterGroupEvent(key, SET_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
 
     if (op == REDIS_FLEX_COUNTER_COMMAND_DEL_GROUP)
-        return processFlexCounterGroupEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
-
-    SWSS_LOG_THROW("event op '%s' is not implemented, FIXME", op.c_str());
+        ret = processFlexCounterGroupEvent(key, DEL_COMMAND, kfvFieldsValues(kco), true, sequenceNumber);
+#ifdef COLLECT_STATISTIC    
+    endTimelocal = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTimelocal - startTimelocal);
+    collectStatistic(key, op, objectTypeStr, ringBufferName, duration);
+#endif
+    return ret;
+    //SWSS_LOG_THROW("event op '%s' is not implemented, FIXME", op.c_str());
 }
 
 sai_status_t Syncd::processAttrCapabilityQuery(
@@ -751,7 +795,7 @@ sai_status_t Syncd::processFdbFlush(
     auto lambda = [=]() {
         processFdbFlushResponse(status, values, switchVid);
     };
-    LogToModuleFile("1", "add processFdbFlushResponse to sequencer {}", sequenceNumber);
+    LogToModuleFileMp("1", "add processFdbFlushResponse to sequencer {}", sequenceNumber);
     sendStausAdvancedResponseSequence(sequenceNumber,lambda);
 
     return status;
@@ -1110,7 +1154,7 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
             if (info->isnonobjectid)
             {
                 syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
-                LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+                LogToModuleFileMp("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
                 auto lambda = [=]() {
                     sendApiResponseUpdateRedisBulkQuadEvent(api, SAI_STATUS_SUCCESS, SEQ_STATUS( statuses.size(), statuses.data()));
                 };
@@ -1140,7 +1184,7 @@ sai_status_t Syncd::processBulkQuadEventInInitViewMode(
 					    // in init view mode insert every created object except switch
                         m_createdInInitView.insert(objectVid);
                     }
-                    LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion to Lambda {}", sequenceNumber);
+                    LogToModuleFileMp("1", "add sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion to Lambda {}", sequenceNumber);
                     auto lambda = [=]() {
                         sendApiResponseUpdateRedisBulkQuadEventWithObjectInsertion(api, SAI_STATUS_SUCCESS, SEQ_STATUS( statuses.size(), statuses.data()));
                     };
@@ -1202,7 +1246,7 @@ sai_status_t Syncd::processBulkCreateEntry(
 
             static PerformanceIntervalTimer timer("Syncd::processBulkCreateEntry(route_entry) CREATE");
 
-            timer.start();
+            timer.start();      
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1213,7 +1257,6 @@ sai_status_t Syncd::processBulkCreateEntry(
                     statuses.data());
 
             timer.stop();
-
             timer.inc(object_count);
         }
         break;
@@ -1979,7 +2022,7 @@ sai_status_t Syncd::processBulkEntry(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+            LogToModuleFileMp("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
             auto lambda = [=]() {
                 sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
@@ -2069,11 +2112,27 @@ sai_status_t Syncd::processBulkEntry(
 
                 timer.start();
 
+                static int RouteEntryCounter = 0;
+                if(RouteEntryCounter == 0)
+                {
+                    startCollectStatistic();
+                }   
+
                 status = processEntry(metaKey, SAI_COMMON_API_CREATE, attr_count, attr_list);
+
+                RouteEntryCounter++;
 
                 timer.stop();
 
                 timer.inc();
+
+               
+                if(RouteEntryCounter >= 10000)
+                {
+                    RouteEntryCounter = 0;
+                    stopCollectStatistic();
+                }
+
             }
             else
             {
@@ -2107,7 +2166,7 @@ sai_status_t Syncd::processBulkEntry(
 
         statuses[idx] = status;
     }
-    LogToModuleFile("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+    LogToModuleFileMp("1", "add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
     auto lambda = [=]() {
         sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
@@ -2342,7 +2401,7 @@ sai_status_t Syncd::processBulkOid(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            LogToModuleFile("1", "1.add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+            LogToModuleFileMp("1", "1.add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
             auto lambda = [=]() {
                 sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
@@ -2398,7 +2457,7 @@ sai_status_t Syncd::processBulkOid(
 
         statuses[idx] = status;
     }
-    LogToModuleFile("1", "2. add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
+    LogToModuleFileMp("1", "2. add sendApiResponseUpdateRedisBulkQuadEvent to Lambda {}", sequenceNumber);
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
     auto lambda = [=]() {
         sendApiResponseUpdateRedisBulkQuadEvent(api, all, SEQ_STATUS(objectIds.size(), statuses.data()));
@@ -2498,7 +2557,7 @@ sai_status_t Syncd::processQuadInInitViewModeCreate(
             m_createdInInitView.insert(objectVid);
         }
     }
-    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    LogToModuleFileMp("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
     syncUpdateRedisQuadEvent(SAI_STATUS_SUCCESS, api, kco);
     auto lambda = [=]() {
         sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS);
@@ -2567,7 +2626,7 @@ sai_status_t Syncd::processQuadInInitViewModeRemove(
 
         m_initViewRemovedVidSet.insert(objectVid);
     }
-    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    LogToModuleFileMp("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
     syncUpdateRedisQuadEvent(SAI_STATUS_SUCCESS, api, kco);
     auto lambda = [=]() {
         sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS);
@@ -2588,7 +2647,7 @@ sai_status_t Syncd::processQuadInInitViewModeSet(
     SWSS_LOG_ENTER();
 
     // we support SET api on all objects in init view mode
-    LogToModuleFile("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    LogToModuleFileMp("1", "add sendApiResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
     syncUpdateRedisQuadEvent(SAI_STATUS_SUCCESS, api, kco);
     auto lambda = [=]() {
         sendApiResponseUpdateRedisQuadEvent(api, SAI_STATUS_SUCCESS);
@@ -2646,7 +2705,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
 
             status = SAI_STATUS_INVALID_OBJECT_ID;
             syncUpdateRedisQuadEvent(status, api, kco);
-            LogToModuleFile("1", "1. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+            LogToModuleFileMp("1", "1. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
             auto lambda = [=]() {
                 sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr));
             };
@@ -2694,7 +2753,7 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
      * switch id, we could also have this method inside metadata to get meta
      * key.
      */
-    LogToModuleFile("1", "2. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
+    LogToModuleFileMp("1", "2. add sendGetResponseUpdateRedisQuadEvent to Lambda {}", sequenceNumber);
     syncUpdateRedisQuadEvent(status, api, kco);
     auto lambda = [=]() {
         sendGetResponseUpdateRedisQuadEvent(objectType, strObjectId, switchVid, status, attr_count, std::move(newPtr));
@@ -2832,7 +2891,7 @@ sai_status_t Syncd::processFlexCounterGroupEvent(
 
     if (fromAsicChannel)
     {
-        LogToModuleFile("1", "add sendApiResponse to Lambda sequenceNumber {}", sequenceNumber);
+        LogToModuleFileMp("1", "add sendApiResponse to Lambda sequenceNumber {}", sequenceNumber);
         auto lambda = [=]() {
             sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
         };
@@ -2879,7 +2938,7 @@ sai_status_t Syncd::processFlexCounterEvent(
 
         if (fromAsicChannel)
         {
-            LogToModuleFile("1", "add sendApiResponse to Lambda {}", sequenceNumber);
+            LogToModuleFileMp("1", "add sendApiResponse to Lambda {}", sequenceNumber);
             auto lambda = [=]() {
                 sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_FAILURE);
             };
@@ -2937,7 +2996,7 @@ sai_status_t Syncd::processFlexCounterEvent(
 
     if (fromAsicChannel)
     {
-        LogToModuleFile("1", "2. add sendApiResponse to Lambda sequenceNumber {}", sequenceNumber);
+        LogToModuleFileMp("1", "2. add sendApiResponse to Lambda sequenceNumber {}", sequenceNumber);
         auto lambda = [=]() {
             sendApiResponse(SAI_COMMON_API_SET, SAI_STATUS_SUCCESS);
         };
@@ -3221,6 +3280,7 @@ sai_status_t Syncd::processQuadEvent(
 
     if (isInitViewMode())
     {
+        LogToModuleFileMp("1", "isInitViewMode sequenceNumber{} api={}, key={}, op={}",  sequenceNumber, sai_serialize_common_api(api), kfvKey(kco), kfvOp(kco));
         sai_status_t status = processQuadEventInInitViewMode(metaKey.objecttype, strObjectId, api, attr_count, attr_list, kco, sequenceNumber);
 
         return status;
@@ -3287,7 +3347,7 @@ sai_status_t Syncd::processQuadEvent(
         syncUpdateRedisQuadEvent(status, api, kco);
 
 
-        LogToModuleFile("1", "add sendGetResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        LogToModuleFileMp("1", "add sendGetResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
         
 #if 0
 
@@ -3370,7 +3430,7 @@ sai_status_t Syncd::processQuadEvent(
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
-        LogToModuleFile("1", "1. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        LogToModuleFileMp("1", "1. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
         syncUpdateRedisQuadEvent(status, api, kco);
 	    auto lambda = [=]() {
 	         sendApiResponseUpdateRedisQuadEvent(api, status);
@@ -3404,7 +3464,7 @@ sai_status_t Syncd::processQuadEvent(
     }
     else // non GET api, status is SUCCESS
     {
-        LogToModuleFile("1", "2. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
+        LogToModuleFileMp("1", "2. add sendApiResponseUpdateRedisQuadEvent to Lambda sequenceNumber {}", sequenceNumber);
         syncUpdateRedisQuadEvent(status, api, kco);
         auto lambda = [=]() {
             sendApiResponseUpdateRedisQuadEvent(api, status);
@@ -5589,19 +5649,259 @@ bool Syncd::findOperationGroup(
     return found;
 }
 
-void Syncd::getApiRingBuffer(
-    _In_ const swss::KeyOpFieldsValuesTuple &kco,
-    _Out_ SyncdRing*& ringBuffer)
+#ifdef COLLECT_STATISTIC
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <mutex>
+#include <chrono>
+#include <unordered_map>
+#include <tuple>
+
+std::mutex statisticMutex;
+std::unordered_map<std::string, std::tuple<std::string, std::string, std::string, int, std::chrono::steady_clock::duration>> requestStatistics;
+bool measurementStarted = false;
+std::chrono::steady_clock::time_point startTime, endTime;
+
+void startCollectStatistic()
 {
-    ringBuffer = nullptr;     
+    LogToModuleFile("3", "startCollectStatistic");
+    std::lock_guard<std::mutex> lock(statisticMutex);
+    measurementStarted = true;
+}
+
+
+void stopCollectStatistic()
+{
+    LogToModuleFile("3", "stopCollectStatistic");
+    if (measurementStarted)
+    {
+        measurementStarted = false;
+
+        // Write statistics to file
+        std::ofstream outfile("/requests_statistic.txt", std::ios::app);
+        LogToModuleFile("3", "outfile requests_statistic.txt");
+        if (outfile.is_open())
+        {
+            outfile << "Statistics:\n";
+            // Define column widths
+            const int COL_WIDTH_OP = 20;
+            const int COL_WIDTH_OBJ_TYPE = 20;
+            const int COL_WIDTH_RING_BUFFER = 40;
+            const int COL_WIDTH_COUNT = 10;
+            const int COL_WIDTH_TOTAL_TIME = 15;
+
+            outfile << std::left // Align columns to the left
+                    << std::setw(COL_WIDTH_OP) << "Operation"
+                    << std::setw(COL_WIDTH_OBJ_TYPE) << "Object Type"
+                    << std::setw(COL_WIDTH_RING_BUFFER) << "Ring Buffer"
+                    << std::setw(COL_WIDTH_COUNT) << "Count"
+                    << std::setw(COL_WIDTH_TOTAL_TIME) << "Total Time\n";
+
+            for (const auto& stat : requestStatistics)
+            {
+                const auto& storedTuple = stat.second;
+                const std::string& storedOp = std::get<0>(storedTuple);
+                const std::string& storedObjectType = std::get<1>(storedTuple);
+                const std::string& storedRingBufferName = std::get<2>(storedTuple);
+                int count = std::get<3>(storedTuple);
+                auto totalTime = std::get<4>(storedTuple);
+
+                // Convert total time to sec.milliseconds.microseconds format
+                auto seconds = std::chrono::duration_cast<std::chrono::seconds>(totalTime);
+                auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(totalTime - seconds);
+                auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(totalTime - seconds - milliseconds);
+
+                outfile << std::left
+                        << std::setw(COL_WIDTH_OP) << storedOp
+                        << std::setw(COL_WIDTH_OBJ_TYPE) << storedObjectType
+                        << std::setw(COL_WIDTH_RING_BUFFER) << storedRingBufferName
+                        << std::setw(COL_WIDTH_COUNT) << count
+                        << std::setw(COL_WIDTH_TOTAL_TIME) << (seconds.count() > 0 ? std::to_string(seconds.count()) + " sec " : "")
+                        << (milliseconds.count() > 0 ? std::to_string(milliseconds.count()) + " ms " : "")
+                        << (microseconds.count() > 0 ? std::to_string(microseconds.count()) + " µs" : "") << '\n';
+            }
+
+            outfile.close();
+
+        }
+
+        // Clear the statistics
+        requestStatistics.clear();
+    }
+
+}
+
+
+void collectStatistic(
+    const std::string& key,
+    const std::string& op,
+    const std::string& objectTypeStr,
+    const std::string& ringBufferName,
+    const std::chrono::steady_clock::duration executionTime)
+{
+
+    std::string statKey = op + ":" + objectTypeStr + ":" + ringBufferName;
+
+    // Lock the mutex to protect access to requestStatistics
+    std::lock_guard<std::mutex> lock(statisticMutex);
+
+//LogToModuleFileMp("2", "measurementStarted {}",measurementStarted);
+
+    if (measurementStarted)
+    {
+        // Increment the count for the specific combination of key, op, object type, and ring buffer name
+        auto it = requestStatistics.find(statKey);
+        if (it != requestStatistics.end())
+        {
+            auto& storedTuple = it->second;       
+            int& count = std::get<3>(storedTuple);
+            std::chrono::steady_clock::duration& totalTime = std::get<4>(storedTuple);
+            count++; // Increment the count
+            totalTime += executionTime; // Add execution time
+//LogToModuleFileMp("2", "add count {}",count);
+        }
+        else
+        {
+            // Add the combination with an initial count of 1 and execution time
+            requestStatistics[statKey] = std::make_tuple(op, objectTypeStr, ringBufferName, 1, executionTime);
+            LogToModuleFileMp("3", "add statKey {}",statKey.c_str());
+        }
+    }
+
+#if 0
+    // Start measurement only when objectTypeStr is "SAI_OBJECT_TYPE_VLAN" and op is "create"
+LogToModuleFileMp("2", "objectTypeStr {} op {} key {}",objectTypeStr,op,key);
+    if (key.find("SAI_OBJECT_TYPE_VLAN") != std::string::npos)
+    {
+        LogToModuleFileMp("2", "key {}",key.c_str());
+    }
+
+    if (objectTypeStr == "SAI_OBJECT_TYPE_VLAN")
+    {
+        LogToModuleFileMp("2", "objectTypeStr {}",objectTypeStr);
+    }
+
+
+    if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
+    {
+        LogToModuleFileMp("2", "op {}",op.c_str());
+    } 
+
+    if ((key.find("SAI_OBJECT_TYPE_VLAN") != std::string::npos) && op == REDIS_ASIC_STATE_COMMAND_CREATE)
+    {
+        if (!measurementStarted)
+        {
+            measurementStarted = true;
+            startTime = std::chrono::steady_clock::now();
+            std::cout << "Measurement started for VLAN create" << std::endl;
+        }
+    }
+
+    // Stop measurement when objectTypeStr is "SAI_OBJECT_TYPE_VLAN" and op is "remove"
+    if ((key.find("SAI_OBJECT_TYPE_VLAN") != std::string::npos) && op == REDIS_ASIC_STATE_COMMAND_REMOVE)
+    {
+LogToModuleFileHp("3", "SAI_OBJECT_TYPE_VLAN remove");
+        if (measurementStarted)
+        {
+            measurementStarted = false;
+            endTime = std::chrono::steady_clock::now();
+            std::cout << "Measurement stopped for VLAN remove" << std::endl;
+
+            // Write statistics to file
+            std::ofstream outfile("/requests_statistic.txt");
+            LogToModuleFileHp("3", "outfile requests_statistic.txt");
+            if (outfile.is_open())
+            {
+                outfile << "Statistics:\n";
+                // Define column widths
+                const int COL_WIDTH_OP = 20;
+                const int COL_WIDTH_OBJ_TYPE = 20;
+                const int COL_WIDTH_RING_BUFFER = 40;
+                const int COL_WIDTH_COUNT = 10;
+                const int COL_WIDTH_TOTAL_TIME = 15;
+
+                outfile << std::left // Align columns to the left
+                        << std::setw(COL_WIDTH_OP) << "Operation"
+                        << std::setw(COL_WIDTH_OBJ_TYPE) << "Object Type"
+                        << std::setw(COL_WIDTH_RING_BUFFER) << "Ring Buffer"
+                        << std::setw(COL_WIDTH_COUNT) << "Count"
+                        << std::setw(COL_WIDTH_TOTAL_TIME) << "Total Time\n";
+
+                for (const auto& stat : requestStatistics)
+                {
+                    const auto& storedTuple = stat.second;
+                    const std::string& storedOp = std::get<0>(storedTuple);
+                    const std::string& storedObjectType = std::get<1>(storedTuple);
+                    const std::string& storedRingBufferName = std::get<2>(storedTuple);
+                    int count = std::get<3>(storedTuple);
+                    auto totalTime = std::get<4>(storedTuple);
+
+                    // Convert total time to sec.milliseconds.microseconds format
+                    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(totalTime);
+                    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(totalTime - seconds);
+                    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(totalTime - seconds - milliseconds);
+
+                    outfile << std::left
+                            << std::setw(COL_WIDTH_OP) << storedOp
+                            << std::setw(COL_WIDTH_OBJ_TYPE) << storedObjectType
+                            << std::setw(COL_WIDTH_RING_BUFFER) << storedRingBufferName
+                            << std::setw(COL_WIDTH_COUNT) << count
+                            << std::setw(COL_WIDTH_TOTAL_TIME) << (seconds.count() > 0 ? std::to_string(seconds.count()) + " sec " : "")
+                            << (milliseconds.count() > 0 ? std::to_string(milliseconds.count()) + " ms " : "")
+                            << (microseconds.count() > 0 ? std::to_string(microseconds.count()) + " µs" : "") << '\n';
+                }
+
+                // Measure the duration
+                auto totalDuration = endTime - startTime;
+                auto totalSeconds = std::chrono::duration_cast<std::chrono::seconds>(totalDuration);
+                auto totalMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(totalDuration - totalSeconds);
+                auto totalMicroseconds = std::chrono::duration_cast<std::chrono::microseconds>(totalDuration - totalSeconds - totalMilliseconds);
+
+                outfile << "\nTotal duration   : "
+                        << totalSeconds.count() << " sec "
+                        << totalMilliseconds.count() << " ms "
+                        << totalMicroseconds.count() << " µs\n";
+
+
+                // Measure the duration
+                outfile << "Total duration: " << totalSeconds.count() << "." << totalMilliseconds.count() << "." << totalMicroseconds.count() << " seconds\n";
+                outfile.close();
+ 
+            }
+
+            // Clear the statistics
+            requestStatistics.clear();
+        }
+    }
+
+#endif
+
+
+}
+#endif
+
+
+bool Syncd::getApiRingBuffer(
+    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+    _Out_ SyncdRing*& ringBuffer,
+    _Out_ std::string& objectTypeStr)
+{
+    ringBuffer = nullptr;  
+    objectTypeStr = "NULL";   
 
     auto& key = kfvKey(kco);
+
+    if (key.length() == 0)
+        return false;
+    
     auto& op = kfvOp(kco);    
 
     SWSS_LOG_DEBUG("op: %s key:%s", op.c_str(), key.c_str());
 
     bool found = false;
     std::string valueStr = op.c_str();
+ 
 
     found = findOperationGroup(valueStr, ringBuffer);
 
@@ -5610,14 +5910,19 @@ void Syncd::getApiRingBuffer(
         getObjectTypeByOperation(kco, objectType);
 
         if (SAI_OBJECT_TYPE_NULL != objectType) { // valid object type
-            valueStr = sai_serialize_object_type(objectType);
-            found = findOperationGroup(valueStr, ringBuffer);
+            objectTypeStr = sai_serialize_object_type(objectType);            
+            found = findOperationGroup(objectTypeStr, ringBuffer);
+            if (found) {
+                LogToModuleFileMp("1", "match ring buffer {} to opject type {}",getNameByRingBuffer(ringBuffer), objectTypeStr);
+            }
         }
     }
 
     if (!found) {
         LogToModuleFile("1", "didn't match ring buffer to api");
-    }
+    }    
+    
+    return true;
 }
 
 void Syncd::run()
@@ -5660,7 +5965,7 @@ void Syncd::run()
     }
     catch(const std::exception &e)
     {
-        LogToModuleFile("1", "shutdown - Runtime error during syncd init: {}", e.what());
+        LogToModuleFileHp("1", "shutdown - Runtime error during syncd init: {}", e.what());
 
         SWSS_LOG_ERROR("Runtime error during syncd init: %s", e.what());
 
@@ -5685,9 +5990,9 @@ void Syncd::run()
         {
             swss::Selectable *sel = NULL;
 
-            LogToModuleFile("1", "before select");
+            LogToModuleFileMp("1", "before select");
             int result = s->select(&sel);
-            LogToModuleFile("1", "after select");
+            LogToModuleFileMp("1", "after select");
 
             //restart query sequencer
             if (sel == m_restartQuery.get())
@@ -5701,12 +6006,12 @@ void Syncd::run()
                  */
 
                 SWSS_LOG_NOTICE("is asic queue empty: %d", m_selectableChannel->empty());
-                LogToModuleFile("1", "is asic queue empty start");
+                LogToModuleFileMp("1", "is asic queue empty start");
                 while (!m_selectableChannel->empty())
                 {
                     processEvent(*m_selectableChannel.get());
                 }
-                LogToModuleFile("1", "is asic queue empty end");
+                LogToModuleFileMp("1", "is asic queue empty end");
 
                 SWSS_LOG_NOTICE("drained queue");
 
@@ -5787,15 +6092,15 @@ void Syncd::run()
                 int sequenceNumber;
                 if(!!m_sequencer->allocateSequenceNumber(&sequenceNumber))
                 {
-                    LogToModuleFile("1", "Failed to allocate sequence number: {}", std::to_string(sequenceNumber));
+                    LogToModuleFileHp("1", "Failed to allocate sequence number: {}", std::to_string(sequenceNumber));
                     //todo: handle wait until sequence number is available with timeout 
                 }
                 else {
-                    LogToModuleFile("1", "Allocated sequence number: ", std::to_string(sequenceNumber));
+                    LogToModuleFileMp("1", "processFlexCounterEvent Allocated sequence number: ", std::to_string(sequenceNumber));
                 }
                 //directly to sequencer
                 auto lambda = [=](){
-                    LogToModuleFile("1", "inside lambda, start m_flexCounter");
+                    LogToModuleFileMp("1", "inside lambda, start m_flexCounter");
                     processFlexCounterEvent(*(swss::ConsumerTable*)sel);
                     LogToModuleFile("1", "inside lambda, end m_flexCounter");
                 };
@@ -5811,18 +6116,18 @@ void Syncd::run()
                 int sequenceNumber;
                 if(!!m_sequencer->allocateSequenceNumber(&sequenceNumber))
                 {
-                    LogToModuleFile("1", "Failed to allocate sequence number");
+                    LogToModuleFileHp("1", "Failed to allocate sequence number");
                     //todo: handle wait until sequence number is available with timeout 
                 }
                 else {
-                    LogToModuleFile("1", "Allocated sequence number: ", std::to_string(sequenceNumber));
+                    LogToModuleFileMp("1", "Allocated sequence number: ", std::to_string(sequenceNumber));
                 }
 
 				LogToModuleFile("1", "BEFORE PUSH INTO RING BUFFER sequence number: ",std::to_string(sequenceNumber));
 				
                 //directly to sequencer
                 auto lambda = [=](){
-                    LogToModuleFile("1", "inside lambda, start m_flexCounterGroup");
+                    LogToModuleFileMp("1", "inside lambda, start m_flexCounterGroup");
                     processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
                     LogToModuleFile("1", "inside lambda, end m_flexCounterGroup");
                 };
@@ -5846,7 +6151,7 @@ void Syncd::run()
         catch(const std::exception &e)
         {
             SWSS_LOG_ERROR("Runtime error: %s", e.what());
-            LogToModuleFile("1", "Runtime error: {}", e.what());
+            LogToModuleFileHp("1", "Runtime error: {}", e.what());
 
             sendShutdownRequestAfterException();
 
@@ -5953,7 +6258,7 @@ void Syncd::sendStatusAndEntryResponse(
 
     std::string strStatus = sai_serialize_status(status);
 
-    LogToModuleFile("1", "sending response: {} with commandType: {}", strStatus.c_str(), commandType.c_str());
+    LogToModuleFileMp("1", "sending response: {} with commandType: {}", strStatus.c_str(), commandType.c_str());
     SWSS_LOG_INFO("sending response: %s with commandType: %s", strStatus.c_str(), commandType.c_str());
 
     m_selectableChannel->set(strStatus, entry, commandType);

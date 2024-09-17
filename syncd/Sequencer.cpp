@@ -26,7 +26,7 @@ Sequencer::SequenceStatus Sequencer::executeReadyResponses() {
             LogToModuleFile("1", "before execute lambda with sequenceNumber: {}", next_seq_to_send);
             //SWSS_LOG_INFO("Before execute lambda with sequenceNumber: %d", next_seq_to_send);
             func();            
-            LogToModuleFile("1", "after execute lambda with sequenceNumber: {}", next_seq_to_send);
+            LogToModuleFileMp("1", "after execute lambda with sequenceNumber: {}", next_seq_to_send);
             status = SUCCESS;
         }
         else {
@@ -62,7 +62,7 @@ bool Sequencer::allocateSequenceNumber(int *seq_num) {
     std::unique_lock<std::mutex> lock(mtx);
    
     while(isFull()) {
-        LogToModuleFile("1", "Sequencer is full, cannot allocate sequence number {}", current_seq);
+        LogToModuleFileHp("1", "Sequencer is full, cannot allocate sequence number {}", current_seq);
         //SWSS_LOG_INFO("Sequencer is full, cannot allocate sequence number %d", current_seq);
         //TODO: add sleep, and timeout error after X seconds
     }
@@ -100,7 +100,7 @@ bool Sequencer::executeFuncInSequence(int seq, std::function<void()> response_la
         if(response_lambda) {
             LogToModuleFile("1", "start execute response_lambda with sequenceNumber: {}", next_seq_to_send);
             response_lambda();
-            LogToModuleFile("1", "end execute response_lambda with sequenceNumber: {}", next_seq_to_send);
+            LogToModuleFileMp("1", "end execute response_lambda with sequenceNumber: {}", next_seq_to_send);
             status = SUCCESS;
         }
         else {
@@ -129,7 +129,7 @@ bool Sequencer::executeFuncInSequence(int seq, std::function<void()> response_la
     } else {
         // If the sequence is not the next to send, store it in the map
         responses[seq] = response_lambda;       
-        LogToModuleFile("1", "storing lambda with seq: {} next to send: {}", seq, next_seq_to_send);
+        LogToModuleFileHp("1", "storing lambda with seq: {} next to send: {}", seq, next_seq_to_send);
         //SWSS_LOG_INFO("storing lambda with seq: %d next to send: %d", seq, next_seq_to_send);
         status = SUCCESS;
         num_of_out_of_sequence_functions++;
