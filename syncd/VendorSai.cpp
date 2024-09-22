@@ -137,6 +137,8 @@ sai_status_t VendorSai::apiInitialize(
         return SAI_STATUS_FAILURE;
     }
 
+    bulkApiInitialize();
+
     m_apiInitialized = true;
 
     return status;
@@ -157,6 +159,126 @@ sai_status_t VendorSai::apiUninitialize(void)
     }
 
     return status;
+}
+
+#define SET_SAI_BULK_API(api, objTy, funcPtr)                                \
+    {                                                                        \
+        const auto key = std::make_pair(api, (sai_object_type_t)objTy);      \
+        const bool isSupported = (m_apis.funcPtr != nullptr);                \
+        SWSS_LOG_DEBUG("Bulk operation %s for API %d and object type %d",    \
+            isSupported ? "supported" : "not supported", api, objTy);        \
+        m_bulkSaiApiMap[key] = isSupported;                                  \
+    }
+
+#define SET_SAI_BULK_API_CREATE(objTy, funcPtr)   SET_SAI_BULK_API( SAI_COMMON_API_BULK_CREATE, objTy, funcPtr)
+#define SET_SAI_BULK_API_REMOVE(objTy, funcPtr)   SET_SAI_BULK_API( SAI_COMMON_API_BULK_REMOVE, objTy, funcPtr)
+#define SET_SAI_BULK_API_SET(objTy, funcPtr)      SET_SAI_BULK_API( SAI_COMMON_API_BULK_SET, objTy, funcPtr)
+#define SET_SAI_BULK_API_GET(objTy, funcPtr)      SET_SAI_BULK_API( SAI_COMMON_API_BULK_GET, objTy, funcPtr)
+
+void VendorSai::bulkApiInitialize()
+{
+    SWSS_LOG_ENTER();
+
+    // Bulk Object ID - create
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_PORT, 						    port_api->create_ports)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_LAG_MEMBER,					    lag_api->create_lag_members)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,		    next_hop_group_api->create_next_hop_group_members)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_SRV6_SIDLIST,					srv6_api->create_srv6_sidlists)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_STP_PORT,						stp_api->create_stp_ports)		
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_VLAN_MEMBER,					vlan_api->create_vlan_members)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_ENI,							dash_eni_api->create_enis)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_VNET,							dash_vnet_api->create_vnets)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_DASH_ACL_GROUP,				    dash_acl_api->create_dash_acl_groups)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_DASH_ACL_RULE,				    dash_acl_api->create_dash_acl_rules)
+		
+	// Bulk Object ID - remove
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_PORT, 						    port_api->remove_ports)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_LAG_MEMBER,					lag_api->remove_lag_members)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,		    next_hop_group_api->remove_next_hop_group_members)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_SRV6_SIDLIST,					srv6_api->remove_srv6_sidlists)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_STP_PORT,						stp_api->remove_stp_ports)		
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_VLAN_MEMBER,					vlan_api->remove_vlan_members)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_ENI,							dash_eni_api->remove_enis)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_VNET,							dash_vnet_api->remove_vnets)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_DASH_ACL_GROUP,				dash_acl_api->remove_dash_acl_groups)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_DASH_ACL_RULE,				    dash_acl_api->remove_dash_acl_rules)
+       
+	// Bulk Entry - cretae		
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_ROUTE_ENTRY,					route_api->create_route_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,				    neighbor_api->create_neighbor_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_FDB_ENTRY,					    fdb_api->create_fdb_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_NAT_ENTRY,					    nat_api->create_nat_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_INSEG_ENTRY,					mpls_api->create_inseg_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_MY_SID_ENTRY,					srv6_api->create_my_sid_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY,		    dash_direction_lookup_api->create_direction_lookup_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY,	dash_eni_api->create_eni_ether_address_map_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_VIP_ENTRY,					    dash_vip_api->create_vip_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY,		    dash_inbound_routing_api->create_inbound_routing_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY,			dash_pa_validation_api->create_pa_validation_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY,		    dash_outbound_routing_api->create_outbound_routing_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY,		dash_outbound_ca_to_pa_api->create_outbound_ca_to_pa_entries)
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_NEXT_HOP,						next_hop_api->create_next_hops)                                 //currently not used in Sonic
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_TUNNEL,						    tunnel_api->create_tunnels)                                     //currently not used in Sonic
+	SET_SAI_BULK_API_CREATE(SAI_OBJECT_TYPE_ROUTER_INTERFACE,				router_interface_api->create_router_interfaces)                 //currently not used in Sonic
+	
+    // Bulk Entry - remove		
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_ROUTE_ENTRY,					route_api->remove_route_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,				neighbor_api->remove_neighbor_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_FDB_ENTRY,					    fdb_api->remove_fdb_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_NAT_ENTRY,					    nat_api->remove_nat_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_INSEG_ENTRY,					mpls_api->remove_inseg_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_MY_SID_ENTRY,					srv6_api->remove_my_sid_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY,		dash_direction_lookup_api->remove_direction_lookup_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY,	dash_eni_api->remove_eni_ether_address_map_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_VIP_ENTRY,					    dash_vip_api->remove_vip_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY,		    dash_inbound_routing_api->remove_inbound_routing_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY,			dash_pa_validation_api->remove_pa_validation_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY,		dash_outbound_routing_api->remove_outbound_routing_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY,		dash_outbound_ca_to_pa_api->remove_outbound_ca_to_pa_entries)
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_NEXT_HOP,						next_hop_api->remove_next_hops)                                 //currently not used in Sonic
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_TUNNEL,						tunnel_api->remove_tunnels)                                     //currently not used in Sonic
+	SET_SAI_BULK_API_REMOVE( SAI_OBJECT_TYPE_ROUTER_INTERFACE,				router_interface_api->remove_router_interfaces)                 //currently not used in Sonic
+	
+    // Bulk Entry - set
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_ROUTE_ENTRY,					route_api->set_route_entries_attribute)
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,				    neighbor_api->set_neighbor_entries_attribute)
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_FDB_ENTRY,					    fdb_api->set_fdb_entries_attribute)
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_NAT_ENTRY,					    nat_api->set_nat_entries_attribute)
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_INSEG_ENTRY,					mpls_api->set_inseg_entries_attribute)
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_MY_SID_ENTRY,					srv6_api->set_my_sid_entries_attribute)
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_NEXT_HOP,						next_hop_api->set_next_hops_attribute)                          //currently not used in Sonic
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_NEXT_HOP_GROUP,				    next_hop_group_api->set_next_hop_group_members_attribute)       //currently not used in Sonic
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_PORT,	                        port_api->set_ports_attribute)                                  //currently not used in Sonic
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_TUNNEL,						    tunnel_api->set_tunnels_attribute)                              //currently not used in Sonic
+	SET_SAI_BULK_API_SET(   SAI_OBJECT_TYPE_ROUTER_INTERFACE,				router_interface_api->set_router_interfaces_attribute)          //currently not used in Sonic
+		
+	// Bulk Entry - get
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_ROUTE_ENTRY,					route_api->get_route_entries_attribute))                        //currently not used in Sonic
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,				    neighbor_api->get_neighbor_entries_attribute)                   //currently not used in Sonic
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_FDB_ENTRY,					    fdb_api->get_fdb_entries_attribute)                             //currently not used in Sonic
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_NAT_ENTRY,					    nat_api->get_nat_entries_attribute)                             //currently not used in Sonic 
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_INSEG_ENTRY,					mpls_api->get_inseg_entries_attribute)                          //currently not used in Sonic
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_MY_SID_ENTRY,					srv6_api->get_my_sid_entries_attribute)                         //currently not used in Sonic
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_NEXT_HOP,						next_hop_api->get_next_hops_attribute)                          //currently not used in Sonic		
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_NEXT_HOP_GROUP,				    next_hop_group_api->get_next_hop_group_members_attribute)       //currently not used in Sonic
+	SET_SAI_BULK_API_GET(    SAI_OBJECT_TYPE_PORT,							port_api->get_ports_attribute)                                  //currently not used in Sonic
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_TUNNEL,						    tunnel_api->get_tunnels_attribute)                              //currently not used in Sonic
+	SET_SAI_BULK_API_GET(   SAI_OBJECT_TYPE_ROUTER_INTERFACE,				router_interface_api->get_router_interfaces_attribute)          //currently not used in Sonic		
+}
+
+bool VendorSai::isBulkApiSupported(
+           _In_ sai_common_api_t api, 
+           _In_ sai_object_type_t objectType)
+{
+    //no MUTEX() here, this is read only and update is done during initialization only
+    SWSS_LOG_ENTER();
+    auto it = m_bulkSaiApiMap.find(std::make_pair(api, objectType));
+    if (it != m_bulkSaiApiMap.end())
+    {
+        return it->second;
+    }
+    SWSS_LOG_WARN("key is not supported");
+    return false;
 }
 
 // QUAD OID

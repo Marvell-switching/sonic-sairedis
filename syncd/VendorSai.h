@@ -11,6 +11,18 @@ extern "C" {
 #include <memory>
 #include <mutex>
 #include <map>
+#include <utility>
+#include <functional>
+#include <unordered_map>
+
+namespace std {
+    template <>
+    struct hash<std::pair<sai_common_api_t, sai_object_type_t>> {
+            std::size_t operator()(const std::pair<sai_common_api_t, sai_object_type_t>& key) const {
+            return std::hash<int>()(static_cast<int>(key.first)) ^ (std::hash<int>()(static_cast<int>(key.second)) << 1);
+            }
+    };
+}
 
 namespace syncd
 {
@@ -30,6 +42,10 @@ namespace syncd
                     _In_ const sai_service_method_table_t *service_method_table) override;
 
             sai_status_t apiUninitialize(void) override;
+
+        private: // helper methods
+
+            void bulkApiInitialize();
 
         public: // SAI interface overrides
 
@@ -219,6 +235,10 @@ namespace syncd
             virtual sai_log_level_t logGet(
                     _In_ sai_api_t api) override;
 
+            virtual bool isBulkApiSupported(
+                    _In_ sai_common_api_t api, 
+                    _In_ sai_object_type_t objectType);
+
         private:
 
             bool m_apiInitialized;
@@ -232,5 +252,7 @@ namespace syncd
             sai_global_apis_t m_globalApis;
 
             std::map<sai_api_t, sai_log_level_t> m_logLevelMap;
+
+            std::unordered_map<std::pair<sai_common_api_t, sai_object_type_t>, bool> m_bulkSaiApiMap;
     };
 }

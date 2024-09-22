@@ -339,3 +339,13 @@ sai_log_level_t SaiInterface::logGet(
 
     return SAI_LOG_LEVEL_NOTICE;
 }
+
+bool SaiInterface::isBulkApiSupported(
+        _In_ sai_common_api_t api, 
+        _In_ sai_object_type_t objectType)
+{
+    SWSS_LOG_ENTER();
+
+    return SAI_STATUS_FAILURE;
+}
+

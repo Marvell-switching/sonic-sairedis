@@ -347,5 +347,9 @@ namespace sairedis
 
             virtual sai_log_level_t logGet(
                     _In_ sai_api_t api);
+                    
+            virtual bool isBulkApiSupported(
+                    _In_ sai_common_api_t api, 
+                    _In_ sai_object_type_t objectType);
     };
 }

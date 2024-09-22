@@ -1744,7 +1744,7 @@ sai_status_t Syncd::processBulkEntry(
 
     sai_status_t all = SAI_STATUS_SUCCESS;
 
-    if (m_commandLineOptions->m_enableSaiBulkSupport)
+    if (m_commandLineOptions->m_enableSaiBulkSupport && m_vendorSai->isBulkApiSupported(api, objectType))
     {
         switch (api)
         {
@@ -2103,7 +2103,7 @@ sai_status_t Syncd::processBulkOid(
 
     sai_status_t all = SAI_STATUS_SUCCESS;
 
-    if (m_commandLineOptions->m_enableSaiBulkSupport)
+    if (m_commandLineOptions->m_enableSaiBulkSupport && m_vendorSai->isBulkApiSupported(api, objectType))
     {
         sai_bulk_op_error_mode_t mode = SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR;
 
