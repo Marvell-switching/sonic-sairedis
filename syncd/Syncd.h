@@ -26,6 +26,9 @@
 #include "swss/producertable.h"
 #include "swss/notificationconsumer.h"
 
+#include "Sequencer.h"
+#include "SyncdMultipleRingBuff.h"
+
 #include <memory>
 
 namespace syncd
@@ -147,25 +150,29 @@ namespace syncd
 
             sai_status_t processQuadEvent(
                     _In_ sai_common_api_t api,
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ sequencer::seq_t seq = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkQuadEvent(
                     _In_ sai_common_api_t api,
-                    _In_ const swss::KeyOpFieldsValuesTuple &kco);
+                    _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                    _In_ sequencer::seq_t seq = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkOid(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string> &object_ids,
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+                    _In_ sequencer::seq_t seq = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkEntry(
                     _In_ sai_object_type_t objectType,
                     _In_ const std::vector<std::string> &object_ids,
                     _In_ sai_common_api_t api,
                     _In_ const std::vector<std::shared_ptr<saimeta::SaiAttributeList>> &attributes,
-                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes);
+                    _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+                    _In_ sequencer::seq_t seq = INVALID_SEQUENCE_NUMBER);
 
             sai_status_t processBulkCreateEntry(
                     _In_ sai_object_type_t objectType,
@@ -333,6 +340,18 @@ namespace syncd
 
             syncd_restart_type_t handleRestartQuery(
                     _In_ swss::NotificationConsumer &restartQuery);
+        
+        void pushRingBuffer(
+                _In_ syncdMultipleRingBuff::SyncdRing* ringBuffer, 
+                _In_ syncdMultipleRingBuff::AnyTask&& func);
+
+        void popRingBuffer(
+                _In_ syncdMultipleRingBuff::SyncdRing* ringBuffer, 
+                _In_ const std::string threadName);         
+        
+        int sendToRingBuffer(
+                _In_ const swss::KeyOpFieldsValuesTuple &kco,
+                _In_ sequencer::seq_t seq);
 
         private:
 
@@ -348,7 +367,8 @@ namespace syncd
                     _In_ sai_common_api_t api,
                     _In_ sai_status_t status,
                     _In_ uint32_t object_count = 0,
-                    _In_ sai_status_t * object_statuses = NULL);
+                    _In_ sai_status_t * object_statuses = NULL,
+                    _In_ sequencer::seq_t seq = INVALID_SEQUENCE_NUMBER);
 
             void sendGetResponse(
                     _In_ sai_object_type_t objectType,
@@ -356,7 +376,8 @@ namespace syncd
                     _In_ sai_object_id_t switchVid,
                     _In_ sai_status_t status,
                     _In_ uint32_t attr_count,
-                    _In_ sai_attribute_t *attr_list);
+                    _In_ sai_attribute_t *attr_list,
+                    _In_ sequencer::seq_t seq = INVALID_SEQUENCE_NUMBER);
 
             void sendNotifyResponse(
                     _In_ sai_status_t status);
@@ -488,7 +509,7 @@ namespace syncd
              *
              * * getting flex counter - here we skip using mutex
              */
-            std::mutex m_mutex;
+            std::shared_ptr<std::mutex> m_mutex;
 
             std::shared_ptr<swss::DBConnector> m_dbAsic;
 
@@ -513,5 +534,17 @@ namespace syncd
             TimerWatchdog m_timerWatchdog;
 
             std::set<sai_object_id_t> m_createdInInitView;
+
+                std::shared_ptr<sequencer::Sequencer> m_sequencer;
+                int m_ring_thread_exited;
+
+                enum class Rings {
+                        RoutingRing,
+                        ACLRing,
+                        DefaultRing,
+                        MaxRings
+                };
+               std::vector<std::shared_ptr<syncdMultipleRingBuff::SyncdRing>> rings;
+               std::vector<std::thread> threads;
     };
 }

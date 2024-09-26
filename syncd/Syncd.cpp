@@ -43,12 +43,25 @@ using namespace syncd;
 using namespace saimeta;
 using namespace sairediscommon;
 using namespace std::placeholders;
+using namespace sequencer;
+using namespace syncdMultipleRingBuff;
 
 #ifdef ASAN_ENABLED
 #define WD_DELAY_FACTOR 2
 #else
 #define WD_DELAY_FACTOR 1
 #endif
+
+#define MSAFE( ... ) \
+    { \
+    std::lock_guard<std::mutex> lock(*m_mutex);\
+    __VA_ARGS__ ;\
+    }
+
+#define SSAFE( ... ) \
+    m_mutex->lock();\
+    __VA_ARGS__ ;\
+    m_mutex->unlock();
 
 Syncd::Syncd(
         _In_ std::shared_ptr<sairedis::SaiInterface> vendorSai,
@@ -61,9 +74,12 @@ Syncd::Syncd(
     m_vendorSai(vendorSai),
     m_veryFirstRun(false),
     m_enableSyncMode(false),
-    m_timerWatchdog(cmd->m_watchdogWarnTimeSpan * WD_DELAY_FACTOR)
+    m_timerWatchdog(cmd->m_watchdogWarnTimeSpan * WD_DELAY_FACTOR),
+    m_ring_thread_exited(false)
 {
     SWSS_LOG_ENTER();
+
+    m_mutex = std::make_shared<std::mutex>();
 
     SWSS_LOG_NOTICE("sairedis git revision %s, SAI git revision: %s", SAIREDIS_GIT_REVISION, SAI_GIT_REVISION);
 
@@ -208,14 +224,42 @@ Syncd::Syncd(
 
     m_breakConfig = BreakConfigParser::parseBreakConfig(m_commandLineOptions->m_breakConfig);
 
+    m_sequencer = std::make_shared<sequencer::Sequencer>();
+   
+    size_t max_ring_size = static_cast<size_t>(Rings::MaxRings);
+    rings.resize(max_ring_size);
+    threads.resize(max_ring_size);
+    for (size_t i = 0; i < max_ring_size; ++i) {
+        rings[i] = std::make_shared<syncdMultipleRingBuff::SyncdRing>();
+
+        std::string ringName;
+        Rings ring = static_cast<Rings>(i);
+        switch (ring) {
+            case Rings::RoutingRing: ringName = "RoutingRing";
+                break;
+            case Rings::ACLRing: ringName = "ACLRing";
+                break;
+            case Rings::DefaultRing: ringName =  "DefaultRing";
+            break;
+            default: ringName = "UnknownRing";
+        }
+        threads[i] = std::thread(&Syncd::popRingBuffer, this, rings[i].get(), ringName);
+    }
+
     SWSS_LOG_NOTICE("syncd started");
+
 }
 
 Syncd::~Syncd()
 {
     SWSS_LOG_ENTER();
 
-    // empty
+    m_ring_thread_exited = true;
+    for (auto& t : threads) {
+            if (t.joinable()) {
+                t.join();
+            }
+    }
 }
 
 void Syncd::performStartupLogic()
@@ -301,10 +345,12 @@ bool Syncd::isInitViewMode() const
 void Syncd::processEvent(
         _In_ sairedis::SelectableChannel& consumer)
 {
+    static int iteration = 0;
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("ITERATION: %d", iteration);
+    iteration++;
 
-    std::lock_guard<std::mutex> lock(m_mutex);
-
+    bool isEmpty = true;
     do
     {
         swss::KeyOpFieldsValuesTuple kco;
@@ -315,11 +361,39 @@ void Syncd::processEvent(
          * data to redis db.
          */
 
-        consumer.pop(kco, isInitViewMode());
+        MSAFE(
+            consumer.pop(kco, isInitViewMode());
+            isEmpty = consumer.empty();
+        );
 
-        processSingleEvent(kco);
+        seq_t seq; 
+        int ret = FAILURE;
+
+        // allocate sequence number
+        SWSS_LOG_NOTICE("try to get seq num");
+        SequenceStatus st = m_sequencer->allocateSequenceNumber(&seq);
+        SWSS_LOG_NOTICE("seq num is %d", seq);
+
+        // send to ring buffer
+        if (st == SUCCESS) {
+            SWSS_LOG_NOTICE("try to send to ring buffer, seq %d", seq);
+            ret = sendToRingBuffer(kco, seq);
+            SWSS_LOG_NOTICE("sendToRingBuffer seq %d, ret: %d", seq, ret);
+        }
+        else {
+            SWSS_LOG_NOTICE("allocateSequenceNumber failed");
+        }
+                 
+        // execute locally 
+        if (ret != SUCCESS)
+        {
+            SWSS_LOG_NOTICE("execute locally, seq %d", seq);
+            auto lambda = [=](){ processSingleEvent(kco); }; 
+            m_sequencer->executeFuncInSequence(seq, lambda);
+            SWSS_LOG_NOTICE("execute seq: %d", seq); 
+        } 
     }
-    while (!consumer.empty());
+    while (!isEmpty);
 }
 
 sai_status_t Syncd::processSingleEvent(
@@ -408,7 +482,9 @@ sai_status_t Syncd::processAttrCapabilityQuery(
     sai_object_id_t switchVid;
     sai_deserialize_object_id(strSwitchVid, switchVid);
 
-    sai_object_id_t switchRid = m_translator->translateVidToRid(switchVid);
+    sai_object_id_t switchRid;
+
+    MSAFE(switchRid = m_translator->translateVidToRid(switchVid););
 
     auto& values = kfvFieldsValues(kco);
 
@@ -416,8 +492,7 @@ sai_status_t Syncd::processAttrCapabilityQuery(
     {
         SWSS_LOG_ERROR("Invalid input: expected 2 arguments, received %zu", values.size());
 
-        m_selectableChannel->set(sai_serialize_status(SAI_STATUS_INVALID_PARAMETER), {}, REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE);
-
+        MSAFE(m_selectableChannel->set(sai_serialize_status(SAI_STATUS_INVALID_PARAMETER), {}, REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE);)
         return SAI_STATUS_INVALID_PARAMETER;
     }
 
@@ -446,8 +521,7 @@ sai_status_t Syncd::processAttrCapabilityQuery(
             capability.create_implemented, capability.set_implemented, capability.get_implemented);
     }
 
-    m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE);
-
+    MSAFE(m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_ATTR_CAPABILITY_RESPONSE););
     return status;
 }
 
@@ -461,7 +535,9 @@ sai_status_t Syncd::processAttrEnumValuesCapabilityQuery(
     sai_object_id_t switchVid;
     sai_deserialize_object_id(strSwitchVid, switchVid);
 
-    sai_object_id_t switchRid = m_translator->translateVidToRid(switchVid);
+    sai_object_id_t switchRid;
+
+    MSAFE(switchRid = m_translator->translateVidToRid(switchVid););
 
     auto& values = kfvFieldsValues(kco);
 
@@ -469,8 +545,7 @@ sai_status_t Syncd::processAttrEnumValuesCapabilityQuery(
     {
         SWSS_LOG_ERROR("Invalid input: expected 3 arguments, received %zu", values.size());
 
-        m_selectableChannel->set(sai_serialize_status(SAI_STATUS_INVALID_PARAMETER), {}, REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE);
-
+        MSAFE(m_selectableChannel->set(sai_serialize_status(SAI_STATUS_INVALID_PARAMETER), {}, REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE););
         return SAI_STATUS_INVALID_PARAMETER;
     }
 
@@ -522,7 +597,7 @@ sai_status_t Syncd::processAttrEnumValuesCapabilityQuery(
         SWSS_LOG_DEBUG("Sending response: count = %u", enumCapList.count);
     }
 
-    m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE);
+    MSAFE(m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_ATTR_ENUM_VALUES_CAPABILITY_RESPONSE);)
 
     return status;
 }
@@ -537,7 +612,12 @@ sai_status_t Syncd::processObjectTypeGetAvailabilityQuery(
     sai_object_id_t switchVid;
     sai_deserialize_object_id(strSwitchVid, switchVid);
 
-    const sai_object_id_t switchRid = m_translator->translateVidToRid(switchVid);
+    sai_object_id_t switchRidtTemp;
+    //  = m_translator->translateVidToRid(switchVid);
+
+    MSAFE(switchRidtTemp = m_translator->translateVidToRid(switchVid););
+
+    const sai_object_id_t switchRid=switchRidtTemp;
 
     std::vector<swss::FieldValueTuple> values = kfvFieldsValues(kco);
 
@@ -554,8 +634,7 @@ sai_status_t Syncd::processObjectTypeGetAvailabilityQuery(
     sai_attribute_t *attr_list = list.get_attr_list();
 
     uint32_t attr_count = list.get_attr_count();
-
-    m_translator->translateVidToRid(objectType, attr_count, attr_list);
+    MSAFE(m_translator->translateVidToRid(objectType, attr_count, attr_list););
 
     uint64_t count;
 
@@ -574,9 +653,7 @@ sai_status_t Syncd::processObjectTypeGetAvailabilityQuery(
 
         SWSS_LOG_DEBUG("Sending response: count = %lu", count);
     }
-
-    m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_RESPONSE);
-
+    MSAFE(m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_OBJECT_TYPE_GET_AVAILABILITY_RESPONSE););
     return status;
 }
 
@@ -590,9 +667,8 @@ sai_status_t Syncd::processFdbFlush(
 
     sai_object_id_t switchVid;
     sai_deserialize_object_id(strSwitchVid, switchVid);
-
-    sai_object_id_t switchRid = m_translator->translateVidToRid(switchVid);
-
+    sai_object_id_t switchRid;
+    MSAFE(switchRid = m_translator->translateVidToRid(switchVid););
     auto& values = kfvFieldsValues(kco);
 
     for (const auto &v: values)
@@ -610,12 +686,10 @@ sai_status_t Syncd::processFdbFlush(
 
     sai_attribute_t *attr_list = list.get_attr_list();
     uint32_t attr_count = list.get_attr_count();
-
-    m_translator->translateVidToRid(SAI_OBJECT_TYPE_FDB_FLUSH, attr_count, attr_list);
+    MSAFE(m_translator->translateVidToRid(SAI_OBJECT_TYPE_FDB_FLUSH, attr_count, attr_list););
 
     sai_status_t status = m_vendorSai->flushFdbEntries(switchRid, attr_count, attr_list);
-
-    m_selectableChannel->set(sai_serialize_status(status), {} , REDIS_ASIC_STATE_COMMAND_FLUSHRESPONSE);
+    MSAFE(m_selectableChannel->set(sai_serialize_status(status), {} , REDIS_ASIC_STATE_COMMAND_FLUSHRESPONSE);)
 
     if (status == SAI_STATUS_SUCCESS)
     {
@@ -659,7 +733,7 @@ sai_status_t Syncd::processFdbFlush(
             }
         }
 
-        m_client->processFlushEvent(switchVid, bridgePortId, bvId, type);
+        MSAFE(m_client->processFlushEvent(switchVid, bridgePortId, bvId, type););
     }
 
     return status;
@@ -680,12 +754,10 @@ sai_status_t Syncd::processClearStatsEvent(
         SWSS_LOG_WARN("CLEAR STATS api can't be used on %s since it's created in INIT_VIEW mode", key.c_str());
 
         sai_status_t status = SAI_STATUS_INVALID_OBJECT_ID;
-
-        m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
-
+        MSAFE(m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE););
         return status;
     }
-
+    MSAFE(
     if (!m_translator->tryTranslateVidToRid(metaKey))
     {
         SWSS_LOG_WARN("VID to RID translation failure: %s", key.c_str());
@@ -693,6 +765,7 @@ sai_status_t Syncd::processClearStatsEvent(
         m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
         return status;
     }
+    );
 
     auto info = sai_metadata_get_object_type_info(metaKey.objecttype);
 
@@ -716,9 +789,7 @@ sai_status_t Syncd::processClearStatsEvent(
             metaKey.objectkey.key.object_id,
             (uint32_t)counter_ids.size(),
             counter_ids.data());
-
-    m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
-
+    MSAFE(m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE););
     return status;
 }
 
@@ -737,14 +808,10 @@ sai_status_t Syncd::processGetStatsEvent(
         SWSS_LOG_WARN("GET STATS api can't be used on %s since it's created in INIT_VIEW mode", key.c_str());
 
         sai_status_t status = SAI_STATUS_INVALID_OBJECT_ID;
-
-        m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
-
+        MSAFE(m_selectableChannel->set(sai_serialize_status(status), {}, REDIS_ASIC_STATE_COMMAND_GETRESPONSE););
         return status;
     }
-
-    m_translator->translateVidToRid(metaKey);
-
+    MSAFE(m_translator->translateVidToRid(metaKey););
     auto info = sai_metadata_get_object_type_info(metaKey.objecttype);
 
     if (info->isnonobjectid)
@@ -786,15 +853,15 @@ sai_status_t Syncd::processGetStatsEvent(
             entry.emplace_back(fvField(values[i]), std::to_string(result[i]));
         }
     }
-
-    m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
+    MSAFE(m_selectableChannel->set(sai_serialize_status(status), entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE););
 
     return status;
 }
 
 sai_status_t Syncd::processBulkQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ seq_t seq)
 {
     SWSS_LOG_ENTER();
 
@@ -862,25 +929,27 @@ sai_status_t Syncd::processBulkQuadEvent(
     if (api != SAI_COMMON_API_BULK_GET)
     {
         // translate attributes for all objects
-
+        MSAFE(
         for (auto &list: attributes)
         {
             sai_attribute_t *attr_list = list->get_attr_list();
             uint32_t attr_count = list->get_attr_count();
 
             m_translator->translateVidToRid(objectType, attr_count, attr_list);
+
         }
+        );
     }
 
     auto info = sai_metadata_get_object_type_info(objectType);
 
     if (info->isobjectid)
     {
-        return processBulkOid(objectType, objectIds, api, attributes, strAttributes);
+        return processBulkOid(objectType, objectIds, api, attributes, strAttributes, seq);
     }
     else
     {
-        return processBulkEntry(objectType, objectIds, api, attributes, strAttributes);
+        return processBulkEntry(objectType, objectIds, api, attributes, strAttributes, seq);
     }
 }
 
@@ -989,6 +1058,7 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_ROUTE_ENTRY:
         {
             std::vector<sai_route_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_route_entry(objectIds[it], entries[it]);
@@ -996,6 +1066,7 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
+            );
 
             static PerformanceIntervalTimer timer("Syncd::processBulkCreateEntry(route_entry) CREATE");
 
@@ -1018,13 +1089,14 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:
         {
             std::vector<sai_neighbor_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_neighbor_entry(objectIds[it], entries[it]);
-
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].rif_id = m_translator->translateVidToRid(entries[it].rif_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1039,14 +1111,14 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_FDB_ENTRY:
         {
             std::vector<sai_fdb_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_fdb_entry(objectIds[it], entries[it]);
-
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].bv_id = m_translator->translateVidToRid(entries[it].bv_id);
             }
-
+            );
             status = m_vendorSai->bulkCreate(
                     object_count,
                     entries.data(),
@@ -1061,6 +1133,7 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_NAT_ENTRY:
         {
             std::vector<sai_nat_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_nat_entry(objectIds[it], entries[it]);
@@ -1068,7 +1141,7 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
-
+            );
             status = m_vendorSai->bulkCreate(
                     object_count,
                     entries.data(),
@@ -1083,13 +1156,14 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_INSEG_ENTRY:
         {
             std::vector<sai_inseg_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_inseg_entry(objectIds[it], entries[it]);
-
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
-            }
 
+            }
+            );
             status = m_vendorSai->bulkCreate(
                     object_count,
                     entries.data(),
@@ -1104,7 +1178,7 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_MY_SID_ENTRY:
         {
             std::vector<sai_my_sid_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_my_sid_entry(objectIds[it], entries[it]);
@@ -1112,6 +1186,7 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1126,13 +1201,13 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY:
         {
             std::vector<sai_direction_lookup_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_direction_lookup_entry(objectIds[it], entries[it]);
-
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1147,13 +1222,14 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY:
         {
             std::vector<sai_eni_ether_address_map_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_eni_ether_address_map_entry(objectIds[it], entries[it]);
 
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1168,13 +1244,14 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_VIP_ENTRY:
         {
             std::vector<sai_vip_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_vip_entry(objectIds[it], entries[it]);
 
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1189,7 +1266,7 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY:
         {
             std::vector<sai_inbound_routing_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_inbound_routing_entry(objectIds[it], entries[it]);
@@ -1197,6 +1274,7 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].eni_id = m_translator->translateVidToRid(entries[it].eni_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1211,7 +1289,7 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY:
         {
             std::vector<sai_pa_validation_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_pa_validation_entry(objectIds[it], entries[it]);
@@ -1219,6 +1297,7 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vnet_id = m_translator->translateVidToRid(entries[it].vnet_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1233,7 +1312,7 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY:
         {
             std::vector<sai_outbound_routing_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_outbound_routing_entry(objectIds[it], entries[it]);
@@ -1241,6 +1320,7 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].eni_id = m_translator->translateVidToRid(entries[it].eni_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1255,7 +1335,7 @@ sai_status_t Syncd::processBulkCreateEntry(
         case SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY:
         {
             std::vector<sai_outbound_ca_to_pa_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_outbound_ca_to_pa_entry(objectIds[it], entries[it]);
@@ -1263,6 +1343,7 @@ sai_status_t Syncd::processBulkCreateEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].dst_vnet_id = m_translator->translateVidToRid(entries[it].dst_vnet_id);
             }
+            );
 
             status = m_vendorSai->bulkCreate(
                     object_count,
@@ -1305,6 +1386,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_ROUTE_ENTRY:
         {
             std::vector<sai_route_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_route_entry(objectIds[it], entries[it]);
@@ -1312,6 +1394,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1325,6 +1408,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:
         {
             std::vector<sai_neighbor_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_neighbor_entry(objectIds[it], entries[it]);
@@ -1332,6 +1416,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].rif_id = m_translator->translateVidToRid(entries[it].rif_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1364,6 +1449,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_NAT_ENTRY:
         {
             std::vector<sai_nat_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_nat_entry(objectIds[it], entries[it]);
@@ -1371,7 +1457,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
-
+            );
             status = m_vendorSai->bulkRemove(
                     object_count,
                     entries.data(),
@@ -1384,7 +1470,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_MY_SID_ENTRY:
         {
             std::vector<sai_my_sid_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_my_sid_entry(objectIds[it], entries[it]);
@@ -1392,6 +1478,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1404,12 +1491,14 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_INSEG_ENTRY:
         {
             std::vector<sai_inseg_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_inseg_entry(objectIds[it], entries[it]);
 
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1423,12 +1512,14 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY:
         {
             std::vector<sai_direction_lookup_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_direction_lookup_entry(objectIds[it], entries[it]);
 
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1442,12 +1533,14 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY:
         {
             std::vector<sai_eni_ether_address_map_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_eni_ether_address_map_entry(objectIds[it], entries[it]);
 
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1461,12 +1554,14 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_VIP_ENTRY:
         {
             std::vector<sai_vip_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_vip_entry(objectIds[it], entries[it]);
 
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1480,6 +1575,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY:
         {
             std::vector<sai_inbound_routing_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_inbound_routing_entry(objectIds[it], entries[it]);
@@ -1487,6 +1583,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].eni_id = m_translator->translateVidToRid(entries[it].eni_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1500,6 +1597,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY:
         {
             std::vector<sai_pa_validation_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_pa_validation_entry(objectIds[it], entries[it]);
@@ -1507,6 +1605,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vnet_id = m_translator->translateVidToRid(entries[it].vnet_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1520,6 +1619,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY:
         {
             std::vector<sai_outbound_routing_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_outbound_routing_entry(objectIds[it], entries[it]);
@@ -1527,6 +1627,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].eni_id = m_translator->translateVidToRid(entries[it].eni_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1540,6 +1641,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
         case SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY:
         {
             std::vector<sai_outbound_ca_to_pa_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_outbound_ca_to_pa_entry(objectIds[it], entries[it]);
@@ -1547,6 +1649,7 @@ sai_status_t Syncd::processBulkRemoveEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].dst_vnet_id = m_translator->translateVidToRid(entries[it].dst_vnet_id);
             }
+            );
 
             status = m_vendorSai->bulkRemove(
                     object_count,
@@ -1596,6 +1699,7 @@ sai_status_t Syncd::processBulkSetEntry(
         case SAI_OBJECT_TYPE_ROUTE_ENTRY:
         {
             std::vector<sai_route_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_route_entry(objectIds[it], entries[it]);
@@ -1603,6 +1707,7 @@ sai_status_t Syncd::processBulkSetEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
+            );
 
             status = m_vendorSai->bulkSet(
                     object_count,
@@ -1617,6 +1722,7 @@ sai_status_t Syncd::processBulkSetEntry(
         case SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:
         {
             std::vector<sai_neighbor_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_neighbor_entry(objectIds[it], entries[it]);
@@ -1624,6 +1730,7 @@ sai_status_t Syncd::processBulkSetEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].rif_id = m_translator->translateVidToRid(entries[it].rif_id);
             }
+            );
 
             status = m_vendorSai->bulkSet(
                     object_count,
@@ -1637,6 +1744,7 @@ sai_status_t Syncd::processBulkSetEntry(
         case SAI_OBJECT_TYPE_FDB_ENTRY:
         {
             std::vector<sai_fdb_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_fdb_entry(objectIds[it], entries[it]);
@@ -1644,6 +1752,7 @@ sai_status_t Syncd::processBulkSetEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].bv_id = m_translator->translateVidToRid(entries[it].bv_id);
             }
+            );
 
             status = m_vendorSai->bulkSet(
                     object_count,
@@ -1658,6 +1767,7 @@ sai_status_t Syncd::processBulkSetEntry(
         case SAI_OBJECT_TYPE_NAT_ENTRY:
         {
             std::vector<sai_nat_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_nat_entry(objectIds[it], entries[it]);
@@ -1665,6 +1775,7 @@ sai_status_t Syncd::processBulkSetEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
+            );
 
             status = m_vendorSai->bulkSet(
                     object_count,
@@ -1679,7 +1790,7 @@ sai_status_t Syncd::processBulkSetEntry(
         case SAI_OBJECT_TYPE_MY_SID_ENTRY:
         {
             std::vector<sai_my_sid_entry_t> entries(object_count);
-
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_my_sid_entry(objectIds[it], entries[it]);
@@ -1687,6 +1798,7 @@ sai_status_t Syncd::processBulkSetEntry(
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
                 entries[it].vr_id = m_translator->translateVidToRid(entries[it].vr_id);
             }
+            );
 
             status = m_vendorSai->bulkSet(
                     object_count,
@@ -1700,12 +1812,14 @@ sai_status_t Syncd::processBulkSetEntry(
         case SAI_OBJECT_TYPE_INSEG_ENTRY:
         {
             std::vector<sai_inseg_entry_t> entries(object_count);
+            MSAFE(
             for (uint32_t it = 0; it < object_count; it++)
             {
                 sai_deserialize_inseg_entry(objectIds[it], entries[it]);
 
                 entries[it].switch_id = m_translator->translateVidToRid(entries[it].switch_id);
             }
+            );
 
             status = m_vendorSai->bulkSet(
                     object_count,
@@ -1729,7 +1843,8 @@ sai_status_t Syncd::processBulkEntry(
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
-        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+        _In_ sequencer::seq_t seq)
 {
     SWSS_LOG_ENTER();
 
@@ -1767,7 +1882,7 @@ sai_status_t Syncd::processBulkEntry(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data(), seq);
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
             return all;
@@ -1892,7 +2007,7 @@ sai_status_t Syncd::processBulkEntry(
         statuses[idx] = status;
     }
 
-    sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+    sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data(), seq);
 
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
@@ -1906,8 +2021,7 @@ sai_status_t Syncd::processEntry(
         _In_ sai_attribute_t *attr_list)
 {
     SWSS_LOG_ENTER();
-
-    m_translator->translateVidToRid(metaKey);
+    MSAFE(m_translator->translateVidToRid(metaKey););
 
     switch (api)
     {
@@ -1962,8 +2076,12 @@ sai_status_t Syncd::processBulkOidCreate(
 
     sai_object_id_t switchRid = SAI_NULL_OBJECT_ID;
 
-    sai_object_id_t switchVid = VidManager::switchIdQuery(objectVids.front());
+    sai_object_id_t switchVid;
+    //  = VidManager::switchIdQuery(objectVids.front());
+    MSAFE(
+    switchVid = VidManager::switchIdQuery(objectVids.front());
     switchRid = m_translator->translateVidToRid(switchVid);
+    );
 
 
     std::vector<sai_object_id_t> objectRids(object_count);
@@ -1989,6 +2107,7 @@ sai_status_t Syncd::processBulkOidCreate(
      * Object was created so new object id was generated we need to save
      * virtual id's to redis db.
      */
+    MSAFE(
     for (size_t idx = 0; idx < object_count; idx++)
     {
         if (statuses[idx] == SAI_STATUS_SUCCESS)
@@ -2005,6 +2124,7 @@ sai_status_t Syncd::processBulkOidCreate(
             }
         }
     }
+    );
 
     return status;
 }
@@ -2028,7 +2148,7 @@ sai_status_t Syncd::processBulkOidRemove(
 
     std::vector<sai_object_id_t> objectVids(object_count);
     std::vector<sai_object_id_t> objectRids(object_count);
-
+    MSAFE(
     for (size_t idx = 0; idx < object_count; idx++)
     {
         sai_deserialize_object_id(objectIds[idx], objectVids[idx]);
@@ -2040,6 +2160,7 @@ sai_status_t Syncd::processBulkOidRemove(
             m_switches.at(switchVid)->collectPortRelatedObjects(objectRids[idx]);
         }
     }
+    );
 
     status = m_vendorSai->bulkRemove(
                                 objectType,
@@ -2060,6 +2181,7 @@ sai_status_t Syncd::processBulkOidRemove(
      * object references since at this point they are no longer valid
      */
     sai_object_id_t switchVid;
+    MSAFE(
     for (size_t idx = 0; idx < object_count; idx++)
     {
         if (statuses[idx] == SAI_STATUS_SUCCESS)
@@ -2079,6 +2201,7 @@ sai_status_t Syncd::processBulkOidRemove(
             }
         }
     }
+    );
 
     return status;
 }
@@ -2088,7 +2211,8 @@ sai_status_t Syncd::processBulkOid(
         _In_ const std::vector<std::string>& objectIds,
         _In_ sai_common_api_t api,
         _In_ const std::vector<std::shared_ptr<SaiAttributeList>>& attributes,
-        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes)
+        _In_ const std::vector<std::vector<swss::FieldValueTuple>>& strAttributes,
+        _In_ sequencer::seq_t seq)
 {
     SWSS_LOG_ENTER();
 
@@ -2124,7 +2248,7 @@ sai_status_t Syncd::processBulkOid(
 
         if (all != SAI_STATUS_NOT_SUPPORTED && all != SAI_STATUS_NOT_IMPLEMENTED)
         {
-            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+            sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data(), seq);
             syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
             return all;
@@ -2177,7 +2301,7 @@ sai_status_t Syncd::processBulkOid(
         statuses[idx] = status;
     }
 
-    sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data());
+    sendApiResponse(api, all, (uint32_t)objectIds.size(), statuses.data(), seq);
 
     syncUpdateRedisBulkQuadEvent(api, statuses, objectType, objectIds, strAttributes);
 
@@ -2417,7 +2541,9 @@ sai_status_t Syncd::processQuadInInitViewModeGet(
          * and it have RID defined, so we can query it.
          */
 
-        sai_object_id_t rid = m_translator->translateVidToRid(objectVid);
+        sai_object_id_t rid;
+        //  = m_translator->translateVidToRid(objectVid);
+        MSAFE(rid = m_translator->translateVidToRid(objectVid););
 
         sai_object_meta_key_t metaKey;
 
@@ -2445,7 +2571,8 @@ void Syncd::sendApiResponse(
         _In_ sai_common_api_t api,
         _In_ sai_status_t status,
         _In_ uint32_t object_count,
-        _In_ sai_status_t* object_statuses)
+        _In_ sai_status_t* object_statuses,
+        _In_ sequencer::seq_t seq)
 {
     SWSS_LOG_ENTER();
 
@@ -2498,7 +2625,16 @@ void Syncd::sendApiResponse(
             sai_serialize_common_api(api).c_str(),
             strStatus.c_str());
 
-    m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
+    if ( seq  == INVALID_SEQUENCE_NUMBER ) {
+        MSAFE(m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE););
+    }
+    else
+    {
+        auto lambda = [=] () {
+            m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
+        };
+        m_sequencer->executeFuncInSequence(seq, lambda,  m_mutex);
+    }
 
     SWSS_LOG_INFO("response for %s api was send",
             sai_serialize_common_api(api).c_str());
@@ -2509,7 +2645,7 @@ void Syncd::processFlexCounterGroupEvent( // TODO must be moved to go via ASIC c
 {
     SWSS_LOG_ENTER();
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(*m_mutex);
 
     swss::KeyOpFieldsValuesTuple kco;
 
@@ -2566,11 +2702,9 @@ void Syncd::processFlexCounterEvent( // TODO must be moved to go via ASIC channe
 {
     SWSS_LOG_ENTER();
 
-    std::lock_guard<std::mutex> lock(m_mutex);
-
     swss::KeyOpFieldsValuesTuple kco;
 
-    consumer.pop(kco);
+    MSAFE(consumer.pop(kco););
 
     auto& key = kfvKey(kco);
     auto& op = kfvOp(kco);
@@ -2613,6 +2747,7 @@ sai_status_t Syncd::processFlexCounterEvent(
 
     sai_object_id_t rid;
 
+    MSAFE(
     if (!m_translator->tryTranslateVidToRid(vid, rid))
     {
         if (fromAsicChannel)
@@ -2627,6 +2762,7 @@ sai_status_t Syncd::processFlexCounterEvent(
         }
         effective_op = DEL_COMMAND;
     }
+    );
 
     if (effective_op == SET_COMMAND)
     {
@@ -2692,6 +2828,7 @@ void Syncd::syncUpdateRedisQuadEvent(
 
     timer.start();
 
+    MSAFE(
     switch (api)
     {
         case SAI_COMMON_API_CREATE:
@@ -2739,6 +2876,7 @@ void Syncd::syncUpdateRedisQuadEvent(
 
             SWSS_LOG_THROW("api %d is not supported", api);
     }
+    );
 
     timer.stop();
 
@@ -2804,7 +2942,7 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
     }
 
     const bool initView = isInitViewMode();
-
+    MSAFE(
     switch (api)
     {
         case SAI_COMMON_API_BULK_CREATE:
@@ -2848,6 +2986,7 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
 
             SWSS_LOG_THROW("api %d is not supported", api);
     }
+    );
 
     timer.stop();
 
@@ -2856,7 +2995,8 @@ void Syncd::syncUpdateRedisBulkQuadEvent(
 
 sai_status_t Syncd::processQuadEvent(
         _In_ sai_common_api_t api,
-        _In_ const swss::KeyOpFieldsValuesTuple &kco)
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ seq_t seq)
 {
     SWSS_LOG_ENTER();
 
@@ -2906,8 +3046,7 @@ sai_status_t Syncd::processQuadEvent(
          *
          * TODO: must be done per switch, and switch may not exists yet
          */
-
-        m_handler->updateNotificationsPointers(attr_count, attr_list);
+        MSAFE(m_handler->updateNotificationsPointers(attr_count, attr_list););
     }
 
     if (isInitViewMode())
@@ -2928,8 +3067,7 @@ sai_status_t Syncd::processQuadEvent(
          */
 
         SWSS_LOG_DEBUG("translating VID to RIDs on all attributes");
-
-        m_translator->translateVidToRid(metaKey.objecttype, attr_count, attr_list);
+        MSAFE(m_translator->translateVidToRid(metaKey.objecttype, attr_count, attr_list););
     }
 
     auto info = sai_metadata_get_object_type_info(metaKey.objecttype);
@@ -2972,18 +3110,23 @@ sai_status_t Syncd::processQuadEvent(
 
         // extract switch VID from any object type
 
-        sai_object_id_t switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
+        sai_object_id_t switchVid;
+        //  = VidManager::switchIdQuery(metaKey.objectkey.key.object_id);
 
-        sendGetResponse(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list);
+        MSAFE(switchVid = VidManager::switchIdQuery(metaKey.objectkey.key.object_id););
+
+        sendGetResponse(metaKey.objecttype, strObjectId, switchVid, status, attr_count, attr_list, seq);
     }
     else if (status != SAI_STATUS_SUCCESS)
     {
-        sendApiResponse(api, status);
+        sendApiResponse(api, status, 0, NULL, seq);
 
         if (info->isobjectid && api == SAI_COMMON_API_SET)
         {
             sai_object_id_t vid = metaKey.objectkey.key.object_id;
-            sai_object_id_t rid = m_translator->translateVidToRid(vid);
+            sai_object_id_t rid;
+            //  = m_translator->translateVidToRid(vid);
+            MSAFE(rid = m_translator->translateVidToRid(vid););
 
             SWSS_LOG_ERROR("VID: %s RID: %s",
                     sai_serialize_object_id(vid).c_str(),
@@ -3007,7 +3150,7 @@ sai_status_t Syncd::processQuadEvent(
     }
     else // non GET api, status is SUCCESS
     {
-        sendApiResponse(api, status);
+        sendApiResponse(api, status, 0, NULL, seq);
     }
 
     syncUpdateRedisQuadEvent(status, api, kco);
@@ -3093,8 +3236,7 @@ sai_status_t Syncd::processOidCreate(
          * yet, so skip translate for switch, but use translate for all other
          * objects.
          */
-
-        switchRid = m_translator->translateVidToRid(switchVid);
+        MSAFE(switchRid = m_translator->translateVidToRid(switchVid););
     }
 
     sai_object_id_t objectRid;
@@ -3146,7 +3288,9 @@ sai_status_t Syncd::processOidRemove(
     sai_object_id_t objectVid;
     sai_deserialize_object_id(strObjectId, objectVid);
 
-    sai_object_id_t rid = m_translator->translateVidToRid(objectVid);
+    sai_object_id_t rid;
+    //   = m_translator->translateVidToRid(objectVid);
+    MSAFE(rid = m_translator->translateVidToRid(objectVid););
 
     if (objectType == SAI_OBJECT_TYPE_PORT)
     {
@@ -3161,8 +3305,7 @@ sai_status_t Syncd::processOidRemove(
     {
         // remove all related objects from REDIS DB and also from existing
         // object references since at this point they are no longer valid
-
-        m_translator->eraseRidAndVid(rid, objectVid);
+        MSAFE(m_translator->eraseRidAndVid(rid, objectVid););
 
         if (objectType == SAI_OBJECT_TYPE_SWITCH)
         {
@@ -3228,7 +3371,9 @@ sai_status_t Syncd::processOidSet(
     sai_object_id_t objectVid;
     sai_deserialize_object_id(strObjectId, objectVid);
 
-    sai_object_id_t rid = m_translator->translateVidToRid(objectVid);
+    sai_object_id_t rid;
+    //  = m_translator->translateVidToRid(objectVid);
+    MSAFE(rid = m_translator->translateVidToRid(objectVid););
 
     sai_status_t status = m_vendorSai->set(objectType, rid, attr);
 
@@ -3251,7 +3396,10 @@ sai_status_t Syncd::processOidGet(
     sai_object_id_t objectVid;
     sai_deserialize_object_id(strObjectId, objectVid);
 
-    sai_object_id_t rid = m_translator->translateVidToRid(objectVid);
+    sai_object_id_t rid;
+    //  = m_translator->translateVidToRid(objectVid);
+    MSAFE(rid = m_translator->translateVidToRid(objectVid););
+
 
     return m_vendorSai->get(objectType, rid, attr_count, attr_list);
 }
@@ -3383,7 +3531,8 @@ void Syncd::sendGetResponse(
         _In_ sai_object_id_t switchVid,
         _In_ sai_status_t status,
         _In_ uint32_t attr_count,
-        _In_ sai_attribute_t *attr_list)
+        _In_ sai_attribute_t *attr_list,
+        _In_ sequencer::seq_t seq)
 {
     SWSS_LOG_ENTER();
 
@@ -3391,7 +3540,9 @@ void Syncd::sendGetResponse(
 
     if (status == SAI_STATUS_SUCCESS)
     {
-        m_translator->translateRidToVid(objectType, switchVid, attr_count, attr_list);
+        {
+            MSAFE(m_translator->translateRidToVid(objectType, switchVid, attr_count, attr_list););
+        }
 
         /*
          * Normal serialization + translate RID to VID.
@@ -3448,8 +3599,19 @@ void Syncd::sendGetResponse(
      * type and object id, only get status is required to be returned.  Get
      * response will not put any data to table, only queue is used.
      */
+    
 
-    m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);
+    if ( seq  == INVALID_SEQUENCE_NUMBER ) {
+        MSAFE(m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);;)
+    }
+    else
+    {
+        auto lambda = [=] () {
+           m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_GETRESPONSE);;
+        };
+        m_sequencer->executeFuncInSequence(seq, lambda,  m_mutex);
+    }
+
 
     SWSS_LOG_INFO("response for GET api was send");
 }
@@ -3580,7 +3742,7 @@ void Syncd::snoopGetAttr(
 
     sai_object_meta_key_t metaKey;
     sai_deserialize_object_meta_key(mk, metaKey);
-
+    MSAFE(
     if (isInitViewMode())
     {
         m_client->setTempAsicObject(metaKey, attrId, attrValue);
@@ -3589,6 +3751,7 @@ void Syncd::snoopGetAttr(
     {
         m_client->setAsicObject(metaKey, attrId, attrValue);
     }
+    );
 }
 
 void Syncd::snoopGetOid(
@@ -3608,7 +3771,10 @@ void Syncd::snoopGetOid(
      * implementation which has different function m_vendorSai->objectTypeQuery.
      */
 
-    sai_object_type_t objectType = VidManager::objectTypeQuery(vid);
+    sai_object_type_t objectType;
+    //  = VidManager::objectTypeQuery(vid);
+
+    MSAFE(objectType = VidManager::objectTypeQuery(vid););
 
     std::string strVid = sai_serialize_object_id(vid);
 
@@ -3666,7 +3832,7 @@ void Syncd::inspectAsic()
 
         // Find all the attrid from ASIC DB, and use them to query ASIC
 
-        auto hash = m_client->getAttributesFromAsicKey(key);
+        SSAFE(auto hash = m_client->getAttributesFromAsicKey(key););
 
         std::vector<swss::FieldValueTuple> values;
 
@@ -3694,8 +3860,7 @@ void Syncd::inspectAsic()
             // just ignore for now
             continue;
         }
-
-        m_translator->translateVidToRid(metaKey);
+        MSAFE(m_translator->translateVidToRid(metaKey););
 
         sai_status_t status = m_vendorSai->get(metaKey, attr_count, attr_list);
 
@@ -3903,7 +4068,7 @@ sai_status_t Syncd::processNotifySyncd(
              * there should be no issue.
              */
 
-            m_translator->clearLocalCache();
+            MSAFE(m_translator->clearLocalCache(););
 
             m_createdInInitView.clear();
         }
@@ -3948,8 +4113,7 @@ void Syncd::sendNotifyResponse(
     std::vector<swss::FieldValueTuple> entry;
 
     SWSS_LOG_INFO("sending response: %s", strStatus.c_str());
-
-    m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_NOTIFY);
+    MSAFE(m_selectableChannel->set(strStatus, entry, REDIS_ASIC_STATE_COMMAND_NOTIFY););
 }
 
 void Syncd::clearTempView()
@@ -3960,7 +4124,7 @@ void Syncd::clearTempView()
 
     SWSS_LOG_TIMER("clear temp view");
 
-    m_client->removeTempAsicStateTable();
+    MSAFE(m_client->removeTempAsicStateTable(););
 
     // Also clear list of objects removed in init view mode.
 
@@ -4034,9 +4198,10 @@ sai_status_t Syncd::applyView()
      */
 
     // Read current and temporary views from REDIS.
-
+    SSAFE(
     auto currentMap = m_client->getAsicView();
     auto temporaryMap = m_client->getTempAsicView();
+    );
 
     if (currentMap.size() != temporaryMap.size())
     {
@@ -4211,10 +4376,11 @@ void Syncd::updateRedisDatabase(
     // database indexes.
 
     SWSS_LOG_TIMER("redis update");
-
+    MSAFE(
     m_client->removeAsicStateTable();
 
     m_client->removeTempAsicStateTable();
+    );
 
     // Save temporary views as current view in redis database.
 
@@ -4274,7 +4440,7 @@ void Syncd::onSyncdStart(
 {
     SWSS_LOG_ENTER();
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(*m_mutex);
 
     /*
      * It may happen that after initialize we will receive some port
@@ -4415,8 +4581,7 @@ void Syncd::onSwitchCreateInInitViewMode(
         SWSS_LOG_NOTICE("created switch VID %s to RID %s in init view mode",
                 sai_serialize_object_id(switchVid).c_str(),
                 sai_serialize_object_id(switchRid).c_str());
-
-        m_translator->insertRidAndVid(switchRid, switchVid);
+        MSAFE(m_translator->insertRidAndVid(switchRid, switchVid););
 
         // make switch initialization and get all default data
 
@@ -4511,7 +4676,7 @@ void Syncd::performWarmRestartSingleSwitch(
 
     std::vector<swss::FieldValueTuple> values;
 
-    auto hash = m_client->getAttributesFromAsicKey(key);
+    SSAFE(auto hash = m_client->getAttributesFromAsicKey(key););
 
     SWSS_LOG_NOTICE("switch %s", strSwitchVid.c_str());
 
@@ -4537,6 +4702,7 @@ void Syncd::performWarmRestartSingleSwitch(
     sai_deserialize_object_id(strSwitchVid, switchVid);
 
     sai_object_id_t originalSwitchRid = m_translator->translateVidToRid(switchVid);
+    // MSAFE(originalSwitchRid = m_translator->translateVidToRid(switchVid););
 
     sai_object_id_t switchRid;
 
@@ -4622,8 +4788,7 @@ void Syncd::performWarmRestart()
      * will have need for it.
      */
 
-    auto entries = m_client->getAsicStateSwitchesKeys();
-
+    SSAFE(auto entries = m_client->getAsicStateSwitchesKeys(););
     if (entries.size() == 0)
     {
         SWSS_LOG_THROW("on warm restart there is no switches defined in DB, not supported yet, FIXME");
@@ -4714,7 +4879,7 @@ void Syncd::sendShutdownRequestAfterException()
 {
     SWSS_LOG_ENTER();
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(*m_mutex);
 
     try
     {
@@ -4985,7 +5150,7 @@ sai_status_t Syncd::setUninitDataPlaneOnRemovalOnAllSwitches()
 void Syncd::syncProcessNotification(
         _In_ const swss::KeyOpFieldsValuesTuple& item)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::mutex> lock(*m_mutex);
 
     SWSS_LOG_ENTER();
 
@@ -5010,7 +5175,9 @@ bool Syncd::isVeryFirstRun()
      * this is first run, let's query HIDDEN ?
      */
 
-    bool firstRun = m_client->hasNoHiddenKeysDefined();
+    bool firstRun;
+    //  = m_client->hasNoHiddenKeysDefined();
+    MSAFE(firstRun = m_client->hasNoHiddenKeysDefined(););
 
     SWSS_LOG_NOTICE("First Run: %s", firstRun ? "True" : "False");
 
@@ -5081,6 +5248,7 @@ void Syncd::run()
 
     m_timerWatchdog.setCallback(timerWatchdogCallback);
 
+    SWSS_LOG_NOTICE("enter main loop");
     while (runMainLoop)
     {
         try
@@ -5098,11 +5266,13 @@ void Syncd::run()
                  * this may lead to forget populate object table which will
                  * lead to unable to find some objects.
                  */
+                bool isEmpty;
+                MSAFE(isEmpty = m_selectableChannel->empty(););
+                SWSS_LOG_NOTICE("is asic queue empty: %d", isEmpty);
 
-                SWSS_LOG_NOTICE("is asic queue empty: %d", m_selectableChannel->empty());
-
-                while (!m_selectableChannel->empty())
+                while (!isEmpty)
                 {
+                    MSAFE(isEmpty = m_selectableChannel->empty(););
                     processEvent(*m_selectableChannel.get());
                 }
 
@@ -5182,14 +5352,17 @@ void Syncd::run()
             }
             else if (sel == m_flexCounter.get())
             {
+                SWSS_LOG_NOTICE("2. m_flexCounter.get()");
                 processFlexCounterEvent(*(swss::ConsumerTable*)sel);
             }
             else if (sel == m_flexCounterGroup.get())
             {
+                SWSS_LOG_NOTICE("3. m_flexCounterGroup.get()");
                 processFlexCounterGroupEvent(*(swss::ConsumerTable*)sel);
             }
             else if (sel == m_selectableChannel.get())
             {
+                SWSS_LOG_NOTICE("4. m_selectableChannel.get()");
                 processEvent(*m_selectableChannel.get());
             }
             else
@@ -5295,4 +5468,132 @@ syncd_restart_type_t Syncd::handleRestartQuery(
     SWSS_LOG_NOTICE("received %s switch shutdown event", op.c_str());
 
     return RequestShutdownCommandLineOptions::stringToRestartType(op);
+}
+
+void Syncd::pushRingBuffer(SyncdRing* ringBuffer, AnyTask&& func)
+{
+    SWSS_LOG_ENTER();
+    if (!ringBuffer || !ringBuffer->Started) 
+    {
+        SWSS_LOG_WARN("ring buffer is null or not started");
+        func();
+    } else {
+        std::unique_lock<std::mutex> lock(ringBuffer->mtx_push);
+        ringBuffer->cv_full.wait(lock, [&](){ return !ringBuffer->IsFull(); });  
+        ringBuffer->push(func);
+        ringBuffer->cv_empty.notify_one();
+     }
+ }
+ 
+ void Syncd::popRingBuffer(SyncdRing* ringBuffer, const std::string threadName) 
+ {
+    pthread_setname_np(pthread_self(), threadName.c_str());
+    SWSS_LOG_ENTER();
+     if (!ringBuffer || ringBuffer->Started)
+ 	{
+        SWSS_LOG_ERROR("ring buffer is null or already started");   
+         return;
+	}   
+     ringBuffer->Started = true;
+     while (!m_ring_thread_exited)
+     {
+        std::unique_lock<std::mutex> lock(ringBuffer->mtx_pop);
+        ringBuffer->cv_empty.wait(lock, [&](){ return !ringBuffer->IsEmpty(); });
+        AnyTask func;
+        while (ringBuffer->pop(func)) {
+            func();
+            ringBuffer->cv_full.notify_one();
+        }
+     }
+ }
+
+
+int Syncd::sendToRingBuffer(
+        _In_ const swss::KeyOpFieldsValuesTuple &kco,
+        _In_ seq_t seq)
+{
+    SWSS_LOG_ENTER();
+
+    const std::string& op = kfvOp(kco);
+    AnyTask&& lambda = nullptr;
+
+    if (op == REDIS_ASIC_STATE_COMMAND_CREATE)
+        lambda = [=](){ processQuadEvent(SAI_COMMON_API_CREATE, kco, seq); };            
+    else if (op == REDIS_ASIC_STATE_COMMAND_REMOVE)
+        lambda = [=](){ processQuadEvent(SAI_COMMON_API_REMOVE, kco, seq); };
+    else if (op == REDIS_ASIC_STATE_COMMAND_SET)
+        lambda = [=](){ processQuadEvent(SAI_COMMON_API_SET, kco, seq); };
+    else if (op == REDIS_ASIC_STATE_COMMAND_GET)
+        lambda = [=](){ processQuadEvent(SAI_COMMON_API_GET, kco, seq); };
+    else if (op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE)
+        lambda = [=](){ processBulkQuadEvent(SAI_COMMON_API_BULK_CREATE, kco, seq); };
+    else if (op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE)
+        lambda = [=](){ processBulkQuadEvent(SAI_COMMON_API_BULK_REMOVE, kco, seq); };
+    else if (op == REDIS_ASIC_STATE_COMMAND_BULK_SET)
+        lambda = [=](){ processBulkQuadEvent(SAI_COMMON_API_BULK_SET, kco, seq); };
+
+    if (lambda != nullptr)
+    {
+        // get the object type
+        sai_object_type_t objectType;
+        const std::string& key = kfvKey(kco);
+
+        if(op == REDIS_ASIC_STATE_COMMAND_CREATE || op == REDIS_ASIC_STATE_COMMAND_REMOVE || op == REDIS_ASIC_STATE_COMMAND_SET || op == REDIS_ASIC_STATE_COMMAND_GET)
+        {
+            SWSS_LOG_INFO("BULK operation %s", op.c_str());
+            const std::string& strObjectId = key.substr(key.find(":") + 1);
+            sai_object_meta_key_t metaKey;
+            sai_deserialize_object_meta_key(key, metaKey);
+            objectType = metaKey.objecttype;
+
+            if (!sai_metadata_is_object_type_valid(objectType))
+            {
+                SWSS_LOG_THROW("invalid object type %s", key.c_str());
+                return FAILURE;
+            }
+        }
+        else if (op == REDIS_ASIC_STATE_COMMAND_BULK_CREATE || op == REDIS_ASIC_STATE_COMMAND_BULK_REMOVE || op == REDIS_ASIC_STATE_COMMAND_BULK_SET) 
+        {
+            SWSS_LOG_INFO("CRUD operation %s", op.c_str());
+            std::string strObjectType = key.substr(0, key.find(":"));
+            sai_deserialize_object_type(strObjectType, objectType);
+        }
+
+        Rings ring_id;
+
+        // determine the ring buffer according to the object type
+        switch (objectType)
+        {
+            case SAI_OBJECT_TYPE_SWITCH:
+            case SAI_OBJECT_TYPE_NEXT_HOP:
+            case SAI_OBJECT_TYPE_NEXT_HOP_GROUP:
+            case SAI_OBJECT_TYPE_ROUTER_INTERFACE:
+            case SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:
+            case SAI_OBJECT_TYPE_ROUTE_ENTRY:
+            case SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER:
+            case SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP:
+                ring_id = Rings::RoutingRing;
+                break;
+            case SAI_OBJECT_TYPE_ACL_TABLE:
+            case SAI_OBJECT_TYPE_ACL_ENTRY:
+            case SAI_OBJECT_TYPE_ACL_COUNTER:
+            case SAI_OBJECT_TYPE_ACL_RANGE:
+            case SAI_OBJECT_TYPE_ACL_TABLE_GROUP:
+            case SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER: 
+            case SAI_OBJECT_TYPE_ACL_TABLE_CHAIN_GROUP:
+                ring_id = Rings::ACLRing;
+                break;
+            default:
+                ring_id = Rings::DefaultRing;  
+        }
+
+        // send the function to the ring buffer
+        size_t ring_int = static_cast<size_t>(ring_id);
+
+        SWSS_LOG_DEBUG("send to ring buffer: key %s op %s seq %d ring %d", key.c_str() , op.c_str(), seq, ring_int);
+        pushRingBuffer(rings[ring_int].get(), std::move(lambda));
+        return SUCCESS;
+    }
+
+    return FAILURE;
 }
