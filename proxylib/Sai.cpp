@@ -1129,11 +1129,11 @@ sai_status_t Sai::dbgGenerateDump(
         swss::FieldValueTuple("DBG_GENERATE_DUMP", dump_file_name),
     };
 
-    std::string key = "DBG_GEN_DUMP:01";
+    /*std::string key = "DBG_GEN_DUMP:01";
 
     m_communicationChannel->set(key, entry, "dbg_gen_dump");
 
-    /*swss::KeyOpFieldsValuesTuple kco;
+    swss::KeyOpFieldsValuesTuple kco;
 
     return m_communicationChannel->wait("dbg_gen_dumpresponse", kco);*/
 
