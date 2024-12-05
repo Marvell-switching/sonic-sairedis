@@ -4,6 +4,7 @@
 
 #include "swss/consumertable.h"
 #include "swss/producertable.h"
+#include <mutex>
 
 namespace sairedis
 {
@@ -17,7 +18,8 @@ namespace sairedis
                     _In_ const std::string& asicStateTable,
                     _In_ const std::string& getResponseTable,
                     _In_ const std::string& tempPrefix,
-                    _In_ bool modifyRedis);
+                    _In_ bool modifyRedis,
+                    _In_ std::shared_ptr<std::mutex> mutex = nullptr);
 
             virtual ~RedisSelectableChannel() = default;
 
@@ -61,5 +63,9 @@ namespace sairedis
             std::string m_tempPrefix;
 
             bool m_modifyRedis;
+
+            bool m_protected;
+
+            std::shared_ptr<std::mutex> m_mutex;
     };
 }
