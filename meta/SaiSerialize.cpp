@@ -2897,6 +2897,14 @@ std::string sai_serialize_poe_port_power_consumption(
     return j.dump();
 }
 
+std::string sai_serialize_nexthop_group_attr(
+        _In_ const  sai_nexthop_group_attr_t value)
+{
+    SWSS_LOG_ENTER();
+
+    return sai_serialize_enum(attr, &sai_metadata_enum_sai_nexthop_group_attr_t);
+}
+
 // deserialize
 
 void sai_deserialize_bool(
@@ -5660,4 +5668,13 @@ void sai_deserialize_redis_link_event_damping_aied_config(
     sai_deserialize_number(j["reuse_threshold"], value.reuse_threshold, false);
     sai_deserialize_number(j["decay_half_life"], value.decay_half_life, false);
     sai_deserialize_number(j["flap_penalty"], value.flap_penalty, false);
+}
+
+std::string sai_deserialzie_nexthop_group_attr(
+        _In_ const std::string& s,
+        _Out_ sai_next_hop_group_attr_t& attr)
+{
+    SWSS_LOG_ENTER();
+
+    return sai_deserialize_enum(value, &sai_metadata_enum_sai_next_hop_group_attr_t, (int32_t&)attr);
 }

@@ -341,6 +341,10 @@ std::string sai_serialize_redis_link_event_damping_algorithm(
 std::string sai_serialize_redis_link_event_damping_aied_config(
          _In_ const sai_redis_link_event_damping_algo_aied_config_t& value);
 
+
+std::string sai_serialzie_nexthop_group_attr(
+        _In_ sai_next_hop_group_attr_t& value);
+
 // deserialize
 
 void sai_deserialize_enum(
@@ -645,3 +649,8 @@ void sai_deserialize_redis_link_event_damping_algorithm(
 void sai_deserialize_redis_link_event_damping_aied_config(
         _In_ const std::string& s,
          _Out_ sai_redis_link_event_damping_algo_aied_config_t& value);
+
+
+std::string sai_deserialzie_nexthop_group_attr(
+        _In_ const std::string& s,
+        _Out_ sai_next_hop_group_attr_t& attr);
