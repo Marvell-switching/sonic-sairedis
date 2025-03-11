@@ -29,6 +29,8 @@ static const std::string COUNTER_TYPE_BUFFER_POOL = "Buffer Pool Counter";
 static const std::string COUNTER_TYPE_ENI = "DASH ENI Counter";
 static const std::string COUNTER_TYPE_METER_BUCKET = "DASH Meter Bucket Counter";
 static const std::string COUNTER_TYPE_POLICER = "Policer Counter";
+static const std::string COUNTER_TYPE_ARS_NEXTHOP_GROUP = "ARS NHG Counter";
+static const std::string COUNTER_TYPE_ARS_LAG = "ARS LAG Counter";
 static const std::string ATTR_TYPE_QUEUE = "Queue Attribute";
 static const std::string ATTR_TYPE_PG = "Priority Group Attribute";
 static const std::string ATTR_TYPE_MACSEC_SA = "MACSEC SA Attribute";
@@ -472,6 +474,24 @@ void deserializeAttr(
 {
     SWSS_LOG_ENTER();
     sai_deserialize_acl_counter_attr(name, attr);
+}
+
+template <>
+void deserializeAttr(
+        _In_ const std::string& name,
+        _Out_ sai_next_hop_group_attr_t &attr)
+{
+    SWSS_LOG_ENTER();
+    sai_deserialize_nexthop_group_attr(name, attr);
+}
+
+template <>
+void deserializeAttr(
+        _In_ const std::string& name,
+        _Out_ sai_lag_attr_t &attr)
+{
+    SWSS_LOG_ENTER();
+    sai_deserialize_alg_attr(name, attr);
 }
 
 template <typename StatType>
@@ -2374,6 +2394,18 @@ std::shared_ptr<BaseCounterContext> FlexCounter::createCounterContext(
     {
         return std::make_shared<CounterContext<sai_policer_stat_t>>(context_name, instance, SAI_OBJECT_TYPE_POLICER, m_vendorSai.get(), m_statsMode);
     }
+    else if (context_name == COUNTER_TYPE_ARS_NEXTHOP_GROUP)
+    {
+        auto context = std::make_shared<CounterContext<sai_next_hop_group_attr_t>>(context_name, SAI_OBJECT_TYPE_NEXT_HOP_GROUP, m_vendorSai.get(), m_statsMode);
+        context->always_check_supported_counters = true;
+        return context;
+}
+    else if (context_name == COUNTER_TYPE_ARS_LAG)
+    {
+        auto context = std::make_shared<CounterContext<sai_lag_attr_t>>(context_name, SAI_OBJECT_TYPE_LAG, m_vendorSai.get(), m_statsMode);
+        context->always_check_supported_counters = true;
+        return context;
+}
 
     SWSS_LOG_THROW("Invalid counter type %s", context_name.c_str());
     // GCC 8.3 requires a return value here
@@ -2675,6 +2707,20 @@ void FlexCounter::removeCounter(
             getCounterContext(COUNTER_TYPE_POLICER)->removeObject(vid);
         }
     }
+    else if (objectType == COUNTER_TYPE_ARS_NEXTHOP_GROUP)
+    {
+        if (hasCounterContext(COUNTER_TYPE_ARS_NEXTHOP_GROUP))
+        {
+            getCounterContext(COUNTER_TYPE_ARS_NEXTHOP_GROUP)->removeObject(vid);
+        }
+    }
+    else if (objectType == COUNTER_TYPE_ARS_LAG)
+    {
+        if (hasCounterContext(COUNTER_TYPE_ARS_LAG))
+        {
+            getCounterContext(COUNTER_TYPE_ARS_LAG)->removeObject(vid);
+        }
+    }
     else
     {
         SWSS_LOG_ERROR("Object type for removal not supported, %s",
@@ -2782,6 +2828,22 @@ void FlexCounter::bulkAddCounter(
         {
             statsMode = value;
         }
+                    vid,
+                    rid,
+                    idStrings,
+                    "");
+        }
+        else if (objectType == (sai_object_type_t)SAI_OBJECT_TYPE_NEXT_HOP_GROUP && field == ARS_NEXTHOP_GROUP_COUNTER_ID_LIST)
+        {
+            getCounterContext(COUNTER_TYPE_ARS_NEXTHOP_GROUP)->addObject(
+                    vid,
+                    rid,
+                    idStrings,
+                    "");
+        }
+        else if (objectType == (sai_object_type_t)SAI_OBJECT_TYPE_LAG && field == ARS_LAG_COUNTER_ID_LIST)
+        {
+            getCounterContext(COUNTER_TYPE_ARS_LAG)->addObject(
         else
         {
             SWSS_LOG_ERROR("Object type and field combination is not supported, object type %s, field %s",
